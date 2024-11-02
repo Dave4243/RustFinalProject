@@ -1,4 +1,5 @@
 mod model;
+mod graphics;
 
 use crate::model::{Layer, ActivationFunction, Network};
 
@@ -12,11 +13,14 @@ fn main() {
     let mut network = Network::new();
 
     let weights: Vec<Vec<f64>> = vec![vec![0.0; 28*28]; 28*28];
-    let layer = Layer::new(28*28, weights);
+    let mut layer = Layer::new(28*28, weights);
+    layer.biases = None;
+    network.add_layer(layer.clone()).unwrap();    
     network.add_layer(layer).unwrap();    
 
     let weights: Vec<Vec<f64>> = vec![vec![0.0; 28*28]; 10];
-    let output_layer = Layer::new(10, weights);
+    let mut output_layer = Layer::new(10, weights);
+    output_layer.biases = None;
     if let Err(x) = network.add_layer(output_layer) {
         panic!("Failed to add layer! problem: {:?}", x);
     }
