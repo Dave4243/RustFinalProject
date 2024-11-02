@@ -1,4 +1,4 @@
-use std::{error::Error, io, process};
+// use std::{error::Error, io, process};
 // use na::{U2, U3, Dynamic, ArrayStorage, VecStorage, Matrix};
 // use ndarray::Array2;
 use std::f64::consts::E;
@@ -63,6 +63,7 @@ impl ActivationFunction {
 /// The matrix multiplation of the previous layer's output and this layer's weights matrix results in this layers output 
 /// 
 /// Also contains optional biases, there is a bias for each node in the layer. This repesents a flat amount to add to the activation sum after accounting for weights
+#[derive(Clone)]
 pub struct Layer {
     // _nodes: [f64; layer_size],
 
@@ -73,7 +74,7 @@ pub struct Layer {
     // _weights: Array2<f64>, // layer_size,
 
     /// The bias for each node. Should be added to the sum of 
-    biases: Option<Vec<f64>>,
+    pub biases: Option<Vec<f64>>,
     // _biases: Option<Array2<f64>>,
 
     activation_function: ActivationFunction,
@@ -86,6 +87,7 @@ pub struct Layer {
 
 }
 
+// Add method for merging two layers, for use in convolutions
 impl Layer { 
     pub fn new(
         size: usize,
@@ -109,14 +111,17 @@ impl Layer {
         // Input vector is vertical
         let mut result: Vec<f64> = vec![0.0; self.size]; 
 
+        // Col is the index of the layer vector
         for (col, weights_row) in self.weights.iter().enumerate() {
-            let sum: f64 = weights_row.iter().zip(&prev_layer_out).map(|(x, y)| x*y).sum();
+            let mut sum: f64 = weights_row.iter().zip(&prev_layer_out).map(|(x, y)| x*y).sum();
+            if let Some(bias) = &self.biases {sum += bias[col]}
             result[col] = sum;
         }
         return result;
     }
 }
 
+#[derive(Clone)]
 pub struct Network /*<I: Iterator<Item=[[f64; 28]; 28]>>*/ {
     // _num_layers: usize,
     // _input: [[f64;28]; 28],
@@ -130,7 +135,7 @@ pub struct Network /*<I: Iterator<Item=[[f64; 28]; 28]>>*/ {
     // vec<[[f64;]]>
 }
 
-impl Network {
+impl Network{
     /// Generates network and auto fills layers from some kind of file storing weights and biases
     /// 
     /// Perhaps we use a file organized like this:
@@ -193,7 +198,7 @@ impl Network {
         self._layers.last_mut().expect("No layers in network!").activation_function = func.clone();
     }
 
-    pub fn calculate(self: &Self, input: Vec<f64>) -> [f64; 10] {
+    pub fn calculate(self: &Self, input: Vec<f64>) -> Vec<f64>/*[f64; 10]*/ {
 
         assert!(self.output_layer().expect("No layers!").size == 10, "output layer has incorrect size! Expected {}, found {}", 10, self.output_layer().expect("No layers!").size);
         
@@ -210,7 +215,9 @@ impl Network {
             // curr_input_matrix = next_input_matrix   
         }
 
-        let result: [f64; 10] = curr_input_matrix.try_into().unwrap_or_else(|x: Vec<f64>| panic!("Wrong sized output! Expected size 10, got size {}", x.len()));
+        // let result: [f64; 10] = curr_input_matrix.try_into().unwrap_or_else(|x: Vec<f64>| panic!("Wrong sized output! Expected size 10, got size {}", x.len()));
+        let result: Vec<f64> = curr_input_matrix;
+        assert!(result.len() == self._layers.last().unwrap().size, "Wrong sized output! Expected size, output layer size: {}, got size {}", self._layers.last().unwrap().size, result.len());
         normalize_output(&result)
         // return curr_input_matrix.into_raw_vec_and_offset().try_into().expect("Could not convert!")
     } 
@@ -254,14 +261,19 @@ pub trait ScoreFunction {
 /// If all input values are 0, returns all 0.0
 ///
 /// Returns the normalized array. 
-fn normalize_output(output: &[f64; 10]) -> [f64;10] {
+fn normalize_output(output: &Vec<f64>) -> Vec<f64> {
+// fn normalize_output(output: &[f64; 10]) -> [f64;10] {
+    let size: usize = output.len();
     let sum: f64 = output.iter().sum();
     
-    if sum == 0.0 {return [0.0; 10]}
+    // if sum == 0.0 {return [0.0; 10]}
+    if sum == 0.0 {return vec![0.0; size];}
     
-    let mut result: [f64; 10] = [0.0; 10];
-    for (i, val) in output.iter().enumerate() {
-        result[i] = val/sum;
+    // let mut result: [f64; 10] = [0.0; 10];
+    let mut result: Vec<f64> = Vec::with_capacity(size);
+    for val in output.iter() {
+        result.push(val/sum);
+        // result[i] = val/sum;
     }
     result
 }
