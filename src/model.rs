@@ -1,26 +1,60 @@
-
-use std::{error::Error, io, process};
-use na::{U2, U3, Dynamic, ArrayStorage, VecStorage, Matrix};
+// use std::{error::Error, io, process};
+// use na::{U2, U3, Dynamic, ArrayStorage, VecStorage, Matrix};
+// use ndarray::Array2;
 use std::f64::consts::E;
 use std::vec::Vec;
+
+
+const IMG_WIDTH: usize = 28;
+const IMG_HEIGHT: usize = 28;
+
 
 // std::f64::consts::E;
 
 // pub mod model {
 // }
-static B:f64 = 1.0;
-
-trait ActivationFunction {
-    fn calculate(input:f64, min:f64, max:f64) -> f64;
+#[derive(Copy, Clone)]
+pub enum ActivationFunction {
+    Sigmoid,
+    Tanh,
+    Relu,
+    None,
 }
-
-pub struct Sigmoid {}
-
-impl ActivationFunction for Sigmoid {
-    fn calculate(input:f64, min:f64, max:f64) -> f64 {
-        1.0/(E.powf(-input * B))
+impl ActivationFunction {
+    pub fn calculate(self, input: f64) -> f64 {
+        match self {
+            Self::Sigmoid => {
+                const B:f64 = 1.0;
+                1.0/(E.powf(-input * B))
+            },
+            Self::Tanh => {
+                (E.powf(input)-E.powf(-input)) / (E.powf(input) + E.powf(-input))
+            },
+            Self::Relu => todo!(),
+            Self::None => input,
+        }
     }
 }
+
+// pub trait ActivationFunction {
+//     fn calculate(input:f64) -> f64;
+// }
+
+// pub struct Sigmoid {}
+// impl ActivationFunction for Sigmoid {
+//     fn calculate(input:f64) -> f64 {
+//         const B:f64 = 1.0;
+        
+//         1.0/(E.powf(-input * B))
+//     }
+// }
+
+// pub struct Tanh {}
+// impl ActivationFunction for Tanh {
+//     fn calculate(input:f64) -> f64 {
+//        (E.powf(input)-E.powf(-input)) / (E.powf(input) + E.powf(-input))
+//     }
+// }
 
 /// Describes 1D vector layer. 
 /// 
@@ -29,16 +63,21 @@ impl ActivationFunction for Sigmoid {
 /// The matrix multiplation of the previous layer's output and this layer's weights matrix results in this layers output 
 /// 
 /// Also contains optional biases, there is a bias for each node in the layer. This repesents a flat amount to add to the activation sum after accounting for weights
+#[derive(Clone)]
 pub struct Layer {
     // _nodes: [f64; layer_size],
 
-    _size: usize,
+    pub size: usize,
     // _prev_layer_size: Option<usize>,
 
-    _weights: Vec<Vec<f64>>, // layer_size,
+    weights: Vec<Vec<f64>>, // layer_size,
+    // _weights: Array2<f64>, // layer_size,
 
     /// The bias for each node. Should be added to the sum of 
-    _biases: Option<Vec<f64>>,
+    pub biases: Option<Vec<f64>>,
+    // _biases: Option<Array2<f64>>,
+
+    activation_function: ActivationFunction,
     // _data: [f64; N] = [0.0; N];
     // _weights: [f64; N] = [0.0; N];
 
@@ -48,30 +87,55 @@ pub struct Layer {
 
 }
 
+// Add method for merging two layers, for use in convolutions
 impl Layer { 
-    pub fn new() -> Self {
-        todo!()
+    pub fn new(
+        size: usize,
+        weights: Vec<Vec<f64>>,
+    ) -> Self {
+        // self._activation_function = ActivationFunction::None;
+        // self._biases = None;
+        assert!(weights.len() == size, "Number of rows (length of columns) in weight, {}, does not match output layer size, {}!", weights.len(), size);
+        
+        Self{
+            size: size,
+            weights,
+            biases : None,
+            activation_function : ActivationFunction::None,
+        }
     }
 
-    pub fn calculate(prevous_layer_val: Vec<f64>) -> Vec<f64> {
-        todo!()
+    pub fn calculate(self: &Self, prev_layer_out: Vec<f64>) -> Vec<f64> {
+        assert!(self.weights.len() == self.size, "Number of rows (length of columns) in weight, {}, does not match output layer size, {}!", self.weights.len(), self.size);
+        
+        // Input vector is vertical
+        let mut result: Vec<f64> = vec![0.0; self.size]; 
+
+        // Col is the index of the layer vector
+        for (col, weights_row) in self.weights.iter().enumerate() {
+            let mut sum: f64 = weights_row.iter().zip(&prev_layer_out).map(|(x, y)| x*y).sum();
+            if let Some(bias) = &self.biases {sum += bias[col]}
+            result[col] = sum;
+        }
+        return result;
     }
 }
 
-pub struct Network<'a> /*<I: Iterator<Item=[[f64; 28]; 28]>>*/ {
+#[derive(Clone)]
+pub struct Network /*<I: Iterator<Item=[[f64; 28]; 28]>>*/ {
     // _num_layers: usize,
     // _input: [[f64;28]; 28],
     // _output: [[f64;28];28],
 
-    _input_layer: &'a Layer,
+    // _input_layer: Option<&'a Layer>,
     _layers: Vec<Layer>,
-    _output_layer: &'a Layer,
+    // _output_layer: Option<&'a Layer>,
 
 
     // vec<[[f64;]]>
 }
 
-impl<'a> Network<'a> {
+impl Network{
     /// Generates network and auto fills layers from some kind of file storing weights and biases
     /// 
     /// Perhaps we use a file organized like this:
@@ -92,14 +156,27 @@ impl<'a> Network<'a> {
     }
 
     pub fn new() -> Self {
-        todo!()
+        Network{
+            _layers : vec![],
+        }
     }
 
-    pub fn add_layer(self: &mut Self, layer: Layer) -> Result<(), ()> {
+    pub fn input_layer(self: &Self) -> Option<&Layer> {
+        self._layers.first()
+    }
+    
+    pub fn output_layer(self: &Self) -> Option<&Layer> {
+        self._layers.last()
+    }
+
+    pub fn add_layer(self: &mut Self, layer: Layer) -> Result<(), String> {
         match self._layers.last() {
             // This code might be wrong lol
-            Some(x) if x._size != layer._weights.len() => {
-                return Err(());
+            Some(prev_layer) if prev_layer.size != layer.weights[0].len() => {
+                return Err(std::format!(
+                    "Rows in previous layer (size) does not match the number of columns in weights of new layer! Previous layer size: {}  |  New weight matrix dims: ({}, {})", 
+                    prev_layer.size, layer.weights.len(), layer.weights[0].len()
+                ));
             }    
             None => {}
             _ => {}
@@ -107,14 +184,42 @@ impl<'a> Network<'a> {
 
         self._layers.push(layer);
 
-        Ok(())
-        
-        // todo!()
-        // Ok(())
+        Ok(())    
     }
 
-    pub fn calculate(input: Vec<f32>) -> [f64; 10] {
-        todo!()
+    pub fn set_hidden_activation(self: &mut Self, func: &ActivationFunction) {
+        for i in 0..self._layers.len()-1 {
+            let layer: &mut Layer = self._layers.get_mut(i).expect("No layers in network!");
+            layer.activation_function = func.clone();
+        }
+    }
+    
+    pub fn set_output_activation(self: &mut Self, func: &ActivationFunction) {
+        self._layers.last_mut().expect("No layers in network!").activation_function = func.clone();
+    }
+
+    pub fn calculate(self: &Self, input: Vec<f64>) -> Vec<f64>/*[f64; 10]*/ {
+
+        assert!(self.output_layer().expect("No layers!").size == 10, "output layer has incorrect size! Expected {}, found {}", 10, self.output_layer().expect("No layers!").size);
+        
+        // let curr_input_matrix:Array2<f64> = Array2::from_shape_vec((1,input.len()), input).expect("Input array bad!");
+        let mut curr_input_matrix: Vec<f64> = input.clone();
+        
+
+        for curr_layer in self._layers.iter() {
+            let raw = curr_layer.calculate(curr_input_matrix);
+            let cooked = raw.into_iter().map(|x| curr_layer.activation_function.calculate(x)).collect();
+            // let next_input_matrix: Vec<Vec<f64>> = Vec::with_capacity();
+            curr_input_matrix = cooked;
+            // let weights_matrix:Array2<f64> = Array2::from(curr_layer._weights);
+            // curr_input_matrix = next_input_matrix   
+        }
+
+        // let result: [f64; 10] = curr_input_matrix.try_into().unwrap_or_else(|x: Vec<f64>| panic!("Wrong sized output! Expected size 10, got size {}", x.len()));
+        let result: Vec<f64> = curr_input_matrix;
+        assert!(result.len() == self._layers.last().unwrap().size, "Wrong sized output! Expected size, output layer size: {}, got size {}", self._layers.last().unwrap().size, result.len());
+        normalize_output(&result)
+        // return curr_input_matrix.into_raw_vec_and_offset().try_into().expect("Could not convert!")
     } 
 }
 
@@ -131,14 +236,19 @@ fn weights_to_ppm(file_name: &str) {
 /// Each row of the file is its own digit image with 748 bytes
 /// 
 /// Should return a 28x28 array of values corresponding to the image on the given row of the file
-fn ubyte_file_read(input_file: &str, row:usize) -> [[f64;28]; 28] {
+fn ubyte_file_read(input_file: &str, row:usize) -> [[f64;IMG_WIDTH]; IMG_HEIGHT] {
     todo!();
 }
 
+
 /// Scores output of function. Ideally a more acurate 
-pub fn ScoreFunction() {
-    todo!();
+pub trait ScoreFunction {
+    fn calculate(&self) -> f64;
 }
+
+// pub fn ScoreFunction() {
+//     todo!();
+// }
 
 /// Accepts an array reference. Each element of the array is the relative probability of that digit digit being selected.
 /// 
@@ -148,11 +258,24 @@ pub fn ScoreFunction() {
 /// 
 /// This ideally is done by dividing each value by the magnitude of the 10th dimensional array
 /// 
-/// Panic if all input values are 0
+/// If all input values are 0, returns all 0.0
 ///
 /// Returns the normalized array. 
-fn normalize_output(output: &[f64; 10]) -> [f64;10] {
-    todo!();
+fn normalize_output(output: &Vec<f64>) -> Vec<f64> {
+// fn normalize_output(output: &[f64; 10]) -> [f64;10] {
+    let size: usize = output.len();
+    let sum: f64 = output.iter().sum();
+    
+    // if sum == 0.0 {return [0.0; 10]}
+    if sum == 0.0 {return vec![0.0; size];}
+    
+    // let mut result: [f64; 10] = [0.0; 10];
+    let mut result: Vec<f64> = Vec::with_capacity(size);
+    for val in output.iter() {
+        result.push(val/sum);
+        // result[i] = val/sum;
+    }
+    result
 }
 
 // fn([[f64;28]; 28]);
