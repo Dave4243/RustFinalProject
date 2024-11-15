@@ -1,60 +1,33 @@
-// use std::{error::Error, io, process};
-// use na::{U2, U3, Dynamic, ArrayStorage, VecStorage, Matrix};
-// use ndarray::Array2;
 use std::f64::consts::E;
 use std::vec::Vec;
-
+use rand::Rng;
 
 const IMG_WIDTH: usize = 28;
 const IMG_HEIGHT: usize = 28;
 
-
-// std::f64::consts::E;
-
-// pub mod model {
-// }
 #[derive(Copy, Clone)]
 pub enum ActivationFunction {
     Sigmoid,
     Tanh,
     Relu,
+    Softmax,
     None,
 }
 impl ActivationFunction {
     pub fn calculate(self, input: f64) -> f64 {
         match self {
             Self::Sigmoid => {
-                const B:f64 = 1.0;
-                1.0/(E.powf(-input * B))
+                1.0 / (1.0 + (-input).exp())
             },
             Self::Tanh => {
                 (E.powf(input)-E.powf(-input)) / (E.powf(input) + E.powf(-input))
             },
-            Self::Relu => todo!(),
+            Self::Relu => input.max(0.0),
+            Self::Softmax => input, // needs input vector, so this is handled in function
             Self::None => input,
         }
     }
 }
-
-// pub trait ActivationFunction {
-//     fn calculate(input:f64) -> f64;
-// }
-
-// pub struct Sigmoid {}
-// impl ActivationFunction for Sigmoid {
-//     fn calculate(input:f64) -> f64 {
-//         const B:f64 = 1.0;
-        
-//         1.0/(E.powf(-input * B))
-//     }
-// }
-
-// pub struct Tanh {}
-// impl ActivationFunction for Tanh {
-//     fn calculate(input:f64) -> f64 {
-//        (E.powf(input)-E.powf(-input)) / (E.powf(input) + E.powf(-input))
-//     }
-// }
 
 /// Describes 1D vector layer. 
 /// 
@@ -65,74 +38,102 @@ impl ActivationFunction {
 /// Also contains optional biases, there is a bias for each node in the layer. This repesents a flat amount to add to the activation sum after accounting for weights
 #[derive(Clone)]
 pub struct Layer {
-    // _nodes: [f64; layer_size],
+    size: usize,
 
-    pub size: usize,
-    // _prev_layer_size: Option<usize>,
+    // The outer vec represents the current layer's neurons
+    // the inner vec represents the previous layer's neurons
+    weights: Vec<Vec<f64>>,
 
-    weights: Vec<Vec<f64>>, // layer_size,
-    // _weights: Array2<f64>, // layer_size,
-
-    /// The bias for each node. Should be added to the sum of 
-    pub biases: Option<Vec<f64>>,
-    // _biases: Option<Array2<f64>>,
+    /// The bias for each neuron. Should be added to the dot product of 
+    /// previous weights and current weights
+    biases: Vec<f64>,
 
     activation_function: ActivationFunction,
-    // _data: [f64; N] = [0.0; N];
-    // _weights: [f64; N] = [0.0; N];
-
-    // Layer()
-
-    // Layer 
-
 }
 
-// Add method for merging two layers, for use in convolutions
 impl Layer { 
-    pub fn new(
-        size: usize,
-        weights: Vec<Vec<f64>>,
-    ) -> Self {
-        // self._activation_function = ActivationFunction::None;
-        // self._biases = None;
-        assert!(weights.len() == size, "Number of rows (length of columns) in weight, {}, does not match output layer size, {}!", weights.len(), size);
+    // initalizes random weights and biases, 
+    // input size is the size of the previous layer
+    // output size is the size of this layer (how many neurons in the layer)
+    fn new(input_size: usize, output_size: usize, activation: ActivationFunction) -> Self {
+        let mut rng = rand::thread_rng();
         
-        Self{
-            size: size,
+        // Randomly initialize weights and biases
+        let weights: Vec<Vec<f64>> = (0..output_size)
+            .map(|_| (0..input_size).map(|_| rng.gen_range(-0.5..0.5)).collect())
+            .collect();
+
+        let biases: Vec<f64> = (0..output_size).map(|_| rng.gen_range(-0.5..0.5)).collect();
+
+        Self {
+            size : input_size,
             weights,
-            biases : None,
-            activation_function : ActivationFunction::None,
+            biases,
+            activation_function : activation,
         }
     }
 
-    pub fn calculate(self: &Self, prev_layer_out: Vec<f64>) -> Vec<f64> {
-        assert!(self.weights.len() == self.size, "Number of rows (length of columns) in weight, {}, does not match output layer size, {}!", self.weights.len(), self.size);
-        
+    // function to initiate a forward pass through this layer of neurons
+    pub fn calculate(self: &Self, prev_layer_out: &Vec<f64>) -> Vec<f64> {
         // Input vector is vertical
         let mut result: Vec<f64> = vec![0.0; self.size]; 
 
         // Col is the index of the layer vector
         for (col, weights_row) in self.weights.iter().enumerate() {
-            let mut sum: f64 = weights_row.iter().zip(&prev_layer_out).map(|(x, y)| x*y).sum();
-            if let Some(bias) = &self.biases {sum += bias[col]}
+            let mut sum: f64 = weights_row.iter()
+                .zip(prev_layer_out)
+                .map(|(x, y)| x*y)
+                .sum();
+            sum += self.biases[col];
             result[col] = sum;
         }
+        
+        // we see a problem arise if "x" is too large or too small (saturated network)
+        // because the sigmoid will map it to -1 or 1, and the gradient
+        // may vanish as a result. There are techniques to combat this issue
+        // but we've initalized weights and biases to [-0.5, 0.5] for now.
+        match self.activation_function {
+            ActivationFunction::Softmax => {
+                // Find the maximum value for numerical stability
+                let max = result.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let exps: Vec<f64> = result.iter().map(|&x| (x - max).exp()).collect::<Vec<f64>>();
+                let sum: f64 = exps.iter().sum();
+                exps.iter().map(|&x| x / sum).collect::<Vec<f64>>();
+            },
+            _ => result.iter_mut().for_each(|x| *x = self.activation_function.calculate(*x)),
+        }
         return result;
+    }
+
+    /// Backprop works as follows:
+    /// Take the output_gradient (gradient of loss w/ respect to current neuron output)
+    /// Multiply output_gradient by derivative of activation function "a".
+    /// This gives you dL/dz (chain rule: dL/dOutput * dOutput/dz (a')= dL/dz)
+    ///     dL/dz is how much the loss changes given a change in z
+    /// Now that you have dL/dz, you can get dL/dW = dL/dz * dz/dW.
+    ///     dL/dW is how much the error changes given a change in w
+    /// This is where input of the function from forward pass comes in handy, let's say input = "x"
+    /// z = W*x + b, so dz/dW = x
+    /// Thus, dL/dz * x = dL/dW, and then you can adjust the weight accordingly (backprop)
+    ///     dL/dW = dL/dz * x
+    /// For the bias, dz/db is just 1, so dL/db = dL/dz * dz/db = dL/dz :)
+    ///     dL/db = dL/dz
+    /// 
+    /// Now that we are done with backprop, we need to pass dL/dPrevLayerOutput to the prev layer
+    /// recall PrevLayerOutput = "x" from earlier. We need dL/dx.
+    /// Again chain rule gives dL/dx = dL/dz * dz/dx.
+    /// z = W * x + b, so dz/dx = W. So dL/dx = dL/dz * W
+    ///     dL/dx = dL/dz * W
+    /// Do this for every neuron
+    fn backpropagate(&mut self, input: &Vec<f64>, output_gradient: Vec<f64>, learning_rate: f64) -> Vec<f64> {
+        todo!();
     }
 }
 
 #[derive(Clone)]
-pub struct Network /*<I: Iterator<Item=[[f64; 28]; 28]>>*/ {
-    // _num_layers: usize,
-    // _input: [[f64;28]; 28],
-    // _output: [[f64;28];28],
-
-    // _input_layer: Option<&'a Layer>,
-    _layers: Vec<Layer>,
-    // _output_layer: Option<&'a Layer>,
-
-
-    // vec<[[f64;]]>
+pub struct Network {
+    layers: Vec<Layer>,
+    learning_rate : f64,
 }
 
 impl Network{
@@ -156,21 +157,30 @@ impl Network{
     }
 
     pub fn new() -> Self {
-        Network{
-            _layers : vec![],
-        }
+        let mut network = Network {
+            layers : vec![],
+            learning_rate : 0.1,
+        };
+        // single layer neural network
+        let first_layer = Layer::new
+        (784, 400, ActivationFunction::Relu);
+        let output_layer = Layer::new
+        (400, 10, ActivationFunction::Softmax);
+        network.layers.push(first_layer);
+        network.layers.push(output_layer);
+        return network;
     }
 
-    pub fn input_layer(self: &Self) -> Option<&Layer> {
-        self._layers.first()
+    pub fn first_layer(self: &Self) -> Option<&Layer> {
+        self.layers.first()
     }
     
     pub fn output_layer(self: &Self) -> Option<&Layer> {
-        self._layers.last()
+        self.layers.last()
     }
 
     pub fn add_layer(self: &mut Self, layer: Layer) -> Result<(), String> {
-        match self._layers.last() {
+        match self.layers.last() {
             // This code might be wrong lol
             Some(prev_layer) if prev_layer.size != layer.weights[0].len() => {
                 return Err(std::format!(
@@ -182,45 +192,40 @@ impl Network{
             _ => {}
         }
 
-        self._layers.push(layer);
+        self.layers.push(layer);
 
         Ok(())    
     }
 
     pub fn set_hidden_activation(self: &mut Self, func: &ActivationFunction) {
-        for i in 0..self._layers.len()-1 {
-            let layer: &mut Layer = self._layers.get_mut(i).expect("No layers in network!");
+        for i in 0..self.layers.len()-1 {
+            let layer: &mut Layer = self.layers.get_mut(i).expect("No layers in network!");
             layer.activation_function = func.clone();
         }
     }
     
     pub fn set_output_activation(self: &mut Self, func: &ActivationFunction) {
-        self._layers.last_mut().expect("No layers in network!").activation_function = func.clone();
+        self.layers.last_mut().expect("No layers in network!").activation_function = func.clone();
     }
 
-    pub fn calculate(self: &Self, input: Vec<f64>) -> Vec<f64>/*[f64; 10]*/ {
+    // changed function to return a 2d vector of the values during forward apss
+    pub fn calculate(self: &Self, input: &Vec<f64>) -> Vec<Vec<f64>>/*[f64; 10]*/ {
+        let mut curr_input_matrix: Vec<Vec<f64>> = vec![input.clone()];
 
-        assert!(self.output_layer().expect("No layers!").size == 10, "output layer has incorrect size! Expected {}, found {}", 10, self.output_layer().expect("No layers!").size);
-        
-        // let curr_input_matrix:Array2<f64> = Array2::from_shape_vec((1,input.len()), input).expect("Input array bad!");
-        let mut curr_input_matrix: Vec<f64> = input.clone();
-        
-
-        for curr_layer in self._layers.iter() {
-            let raw = curr_layer.calculate(curr_input_matrix);
-            let cooked = raw.into_iter().map(|x| curr_layer.activation_function.calculate(x)).collect();
-            // let next_input_matrix: Vec<Vec<f64>> = Vec::with_capacity();
-            curr_input_matrix = cooked;
-            // let weights_matrix:Array2<f64> = Array2::from(curr_layer._weights);
-            // curr_input_matrix = next_input_matrix   
+        for curr_layer in self.layers.iter() {
+            let next_input = curr_layer.calculate(curr_input_matrix.last().unwrap());
+            curr_input_matrix.push(next_input);
         }
-
-        // let result: [f64; 10] = curr_input_matrix.try_into().unwrap_or_else(|x: Vec<f64>| panic!("Wrong sized output! Expected size 10, got size {}", x.len()));
-        let result: Vec<f64> = curr_input_matrix;
-        assert!(result.len() == self._layers.last().unwrap().size, "Wrong sized output! Expected size, output layer size: {}, got size {}", self._layers.last().unwrap().size, result.len());
-        normalize_output(&result)
-        // return curr_input_matrix.into_raw_vec_and_offset().try_into().expect("Could not convert!")
+        return curr_input_matrix;
     } 
+
+    pub fn backpropagate(self : &Self, activations : Vec<Vec<f64>>, actual : Vec<f64>) {
+        todo!();
+    }
+
+    pub fn train(epochs : usize) {
+        todo!();
+    }
 }
 
 /// More positive weights are more green, and more negitive weights are more red. 
@@ -280,3 +285,6 @@ fn normalize_output(output: &Vec<f64>) -> Vec<f64> {
 
 // fn([[f64;28]; 28]);
 
+fn compute_loss(predicted : Vec<f64>, actual : Vec<f64>) -> f64 {
+    todo!();
+}
