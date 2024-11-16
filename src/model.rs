@@ -44,9 +44,17 @@ pub struct Layer {
     // the inner vec represents the previous layer's neurons
     weights: Vec<Vec<f64>>,
 
-    /// The bias for each neuron. Should be added to the dot product of 
-    /// previous weights and current weights
+    // The bias for each neuron. Should be added to the dot product of 
+    // previous weights and current weights
     biases: Vec<f64>,
+
+    // The input from the previous layer ("x")
+    input : Vec<f64>,
+
+    // Values z = W*x + b
+    z_values : Vec<f64>,
+
+    output : Vec<f64>,
 
     activation_function: ActivationFunction,
 }
@@ -69,12 +77,16 @@ impl Layer {
             size : input_size,
             weights,
             biases,
+            input : vec![],
+            z_values : vec![],
+            output: vec![],
             activation_function : activation,
         }
     }
 
     // function to initiate a forward pass through this layer of neurons
-    pub fn calculate(self: &Self, prev_layer_out: &Vec<f64>) -> Vec<f64> {
+    pub fn calculate(&mut self, prev_layer_out: &Vec<f64>) -> Vec<f64> {
+        self.input = prev_layer_out.clone();
         // Input vector is vertical
         let mut result: Vec<f64> = vec![0.0; self.size]; 
 
@@ -87,6 +99,8 @@ impl Layer {
             sum += self.biases[col];
             result[col] = sum;
         }
+        // Store the pre-activation values
+        self.z_values = result.clone();
         
         // we see a problem arise if "x" is too large or too small (saturated network)
         // because the sigmoid will map it to -1 or 1, and the gradient
@@ -96,12 +110,14 @@ impl Layer {
             ActivationFunction::Softmax => {
                 // Find the maximum value for numerical stability
                 let max = result.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                let exps: Vec<f64> = result.iter().map(|&x| (x - max).exp()).collect::<Vec<f64>>();
+                let exps: Vec<f64> = result.iter().map(|&x| (x - max).exp()).collect();
                 let sum: f64 = exps.iter().sum();
-                exps.iter().map(|&x| x / sum).collect::<Vec<f64>>();
+                result = exps.iter().map(|&x| x / sum).collect();
             },
             _ => result.iter_mut().for_each(|x| *x = self.activation_function.calculate(*x)),
         }
+        // Store results and return
+        self.output = result.clone();
         return result;
     }
 
@@ -125,8 +141,30 @@ impl Layer {
     /// z = W * x + b, so dz/dx = W. So dL/dx = dL/dz * W
     ///     dL/dx = dL/dz * W
     /// Do this for every neuron
-    fn backpropagate(&mut self, input: &Vec<f64>, output_gradient: Vec<f64>, learning_rate: f64) -> Vec<f64> {
-        todo!();
+    fn backpropagate(&mut self, output_gradient: Vec<f64>, learning_rate: f64) -> Vec<f64> {
+        let dLdz: Vec<f64> = output_gradient.iter()
+        .zip(self.z_values.iter())
+        .map(|(&og, &iv)| if iv > 0.0 { og } else { 0.0 })
+        .collect();
+
+        for i in 0..self.weights.len() {
+            for j in 0..self.weights[i].len() {
+                let dLdW = dLdz[i] * self.input[j];
+                self.weights[i][j] -= learning_rate * dLdW;
+            }
+        }
+
+        for i in 0..self.biases.len() {
+            self.biases[i] -= learning_rate * dLdz[i];
+        }
+
+        let mut dLdx = vec![0.0; self.input.len()];
+        for j in 0..self.input.len() {
+            for i in 0..self.weights.len() {
+                dLdx[j] += dLdz[i] * self.weights[i][j];
+            }
+        }
+        return dLdx;
     }
 }
 
@@ -208,15 +246,13 @@ impl Network{
         self.layers.last_mut().expect("No layers in network!").activation_function = func.clone();
     }
 
-    // changed function to return a 2d vector of the values during forward apss
-    pub fn calculate(self: &Self, input: &Vec<f64>) -> Vec<Vec<f64>>/*[f64; 10]*/ {
-        let mut curr_input_matrix: Vec<Vec<f64>> = vec![input.clone()];
+    pub fn calculate(&mut self, input: &Vec<f64>) -> Vec<f64> {
+        let mut curr_input: Vec<f64> = input.clone();
 
-        for curr_layer in self.layers.iter() {
-            let next_input = curr_layer.calculate(curr_input_matrix.last().unwrap());
-            curr_input_matrix.push(next_input);
+        for curr_layer in self.layers.iter_mut() {
+            curr_input = curr_layer.calculate(&curr_input);
         }
-        return curr_input_matrix;
+        return curr_input;
     } 
 
     pub fn backpropagate(self : &Self, activations : Vec<Vec<f64>>, actual : Vec<f64>) {
