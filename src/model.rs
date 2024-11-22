@@ -142,11 +142,20 @@ impl Layer {
     ///     dL/dx = dL/dz * W
     /// Do this for every neuron
     fn backpropagate(&mut self, output_gradient: Vec<f64>, learning_rate: f64) -> Vec<f64> {
-        let dLdz: Vec<f64> = output_gradient.iter()
-        .zip(self.z_values.iter())
-        .map(|(&og, &iv)| if iv > 0.0 { og } else { 0.0 })
-        .collect();
+        let dLdz : Vec<f64>;
+        match self.activation_function {
+            ActivationFunction::Relu => {
+                dLdz = output_gradient.iter()
+                .zip(self.z_values.iter())
+                .map(|(&og, &iv)| if iv > 0.0 { og } else { 0.0 })
+                .collect();
+            },
+            ActivationFunction::Softmax => dLdz = output_gradient,
+            _ => return Vec::new(),
+        }
 
+        // update weights
+        // dL/dW = dL/dz * dz/dW = dL/dz * input
         for i in 0..self.weights.len() {
             for j in 0..self.weights[i].len() {
                 let dLdW = dLdz[i] * self.input[j];
@@ -154,16 +163,19 @@ impl Layer {
             }
         }
 
+        // update biases, dL/db = dL/dz * dz/dB = dL/dz * 1 = dL/dz
         for i in 0..self.biases.len() {
             self.biases[i] -= learning_rate * dLdz[i];
         }
 
+        // computes gradient with respect to input (output of prev layer)
         let mut dLdx = vec![0.0; self.input.len()];
         for j in 0..self.input.len() {
             for i in 0..self.weights.len() {
                 dLdx[j] += dLdz[i] * self.weights[i][j];
             }
         }
+        // pass this gradient back
         return dLdx;
     }
 }
@@ -172,6 +184,8 @@ impl Layer {
 pub struct Network {
     layers: Vec<Layer>,
     learning_rate : f64,
+    input : Vec<f64>,
+    output : Vec<f64>,
 }
 
 impl Network{
@@ -198,6 +212,8 @@ impl Network{
         let mut network = Network {
             layers : vec![],
             learning_rate : 0.1,
+            input : vec![],
+            output : vec![],
         };
         // single layer neural network
         let first_layer = Layer::new
@@ -247,16 +263,42 @@ impl Network{
     }
 
     pub fn calculate(&mut self, input: &Vec<f64>) -> Vec<f64> {
+        self.input = input.clone();
         let mut curr_input: Vec<f64> = input.clone();
 
         for curr_layer in self.layers.iter_mut() {
             curr_input = curr_layer.calculate(&curr_input);
         }
+        self.output = curr_input.clone();
         return curr_input;
     } 
+    
+    // actual_classification is the vector of 10 values containing 0s 
+    // and 1 for the actual number the model was supposed to predict
+    pub fn backpropagate(&mut self, actual_classification: &Vec<f64>) -> f64 {
+        let fake_zero = 1e-10;
+        let loss: f64 = self
+            .output
+            .iter()
+            .zip(actual_classification)
+            .map(|(&output, &target)| -(target * (output.max(fake_zero).ln())))
+            .sum::<f64>();        
+        // Compute the gradient of the loss (cross-entrophy) bc we are using softmax
+        // gradient is with respect to pre-softmax values
+        // literally just sum of actual - predicted
+        let output_gradient: Vec<f64> = self
+            .output
+            .iter()
+            .zip(actual_classification)
+            .map(|(&output, &target)| output - target) // Gradient for softmax with cross-entropy
+            .collect();
 
-    pub fn backpropagate(self : &Self, activations : Vec<Vec<f64>>, actual : Vec<f64>) {
-        todo!();
+        // Perform backpropagation for each layer
+        let mut gradient = output_gradient; // Initialize with the gradient of the output layer
+        for i in (0..self.layers.len()).rev() {
+            gradient = self.layers[i].backpropagate(gradient, self.learning_rate);
+        }
+        return loss;
     }
 
     pub fn train(epochs : usize) {
