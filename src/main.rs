@@ -4,11 +4,9 @@ mod model;
 #[allow(unused_imports)]
 use model::{normalize_output, Layer, ActivationFunction, Network, ClassicNetwork, ComputeNetwork};
 
-// use model;
 
 #[tokio::main]
 async fn main() {
-    // Sigmoid(1.0, 1.0, 2.0);
 
     // let file_name = "data/training-data/archive/...";
 
@@ -29,8 +27,8 @@ async fn main() {
     }
     // println!("first layer: {}  |  last layer: {}", network.input_layer().unwrap().size, network.output_layer().unwrap().size);
     
-    network.set_output_activation(&ActivationFunction::Sigmoid);
-    network.set_hidden_activation(&ActivationFunction::Tanh);
+    // network.set_output_activation(&ActivationFunction::Sigmoid);
+    // network.set_hidden_activation(&ActivationFunction::Tanh);
 
     let input = vec![0.0; 28*28];
     let raw_result = network.calculate(input).await;

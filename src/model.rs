@@ -1,6 +1,3 @@
-// use std::{error::Error, io, process};
-// use na::{U2, U3, Dynamic, ArrayStorage, VecStorage, Matrix};
-// use ndarray::Array2;
 #![allow(dead_code)]
 
 use itertools::{interleave, Itertools};
@@ -8,58 +5,34 @@ use std::{f32::consts::E, num::NonZero};
 use std::vec::Vec;
 
 use rust_webgpu::{start_logger, Compute, State};
-
+use rand::Rng;
 
 const IMG_WIDTH: usize = 28;
 const IMG_HEIGHT: usize = 28;
 
-
-// std::f64::consts::E;
-
-// pub mod model {
-// }
 #[derive(Copy, Clone)]
 pub enum ActivationFunction {
     Sigmoid,
     Tanh,
     Relu,
+    Softmax,
     None,
 }
 impl ActivationFunction {
     pub fn calculate(self, input: f32) -> f32 {
         match self {
             Self::Sigmoid => {
-                const B:f32 = 1.0;
-                1.0/(E.powf(-input * B))
+                1.0 / (1.0 + (-input).exp())
             },
             Self::Tanh => {
                 (E.powf(input)-E.powf(-input)) / (E.powf(input) + E.powf(-input))
             },
-            Self::Relu => todo!(),
+            Self::Relu => input.max(0.0),
+            Self::Softmax => input, // needs input vector, so this is handled in function
             Self::None => input,
         }
     }
 }
-
-// pub trait ActivationFunction {
-//     fn calculate(input:f64) -> f64;
-// }
-
-// pub struct Sigmoid {}
-// impl ActivationFunction for Sigmoid {
-//     fn calculate(input:f64) -> f64 {
-//         const B:f64 = 1.0;
-        
-//         1.0/(E.powf(-input * B))
-//     }
-// }
-
-// pub struct Tanh {}
-// impl ActivationFunction for Tanh {
-//     fn calculate(input:f64) -> f64 {
-//        (E.powf(input)-E.powf(-input)) / (E.powf(input) + E.powf(-input))
-//     }
-// }
 
 /// Describes 1D vector layer. 
 /// 
@@ -70,85 +43,117 @@ impl ActivationFunction {
 /// Also contains optional biases, there is a bias for each node in the layer. This repesents a flat amount to add to the activation sum after accounting for weights
 #[derive(Clone)]
 pub struct Layer {
-    // _nodes: [f64; layer_size],
+    size: usize,
 
-    pub size: usize,
-    // _prev_layer_size: Option<usize>,
+    // The outer vec represents the current layer's neurons
+    // the inner vec represents the previous layer's neurons
+    // CLARIFY: This is worded confusingly. 
+    // It seems you mean that the rows of the weights matrix are 
+    // dotted with the input to the layer to produce each row of output
+    // The input vector is in column major format, to be clear.
+    weights: Vec<Vec<f32>>,
 
-    weights: Vec<Vec<f32>>, // layer_size,
-    // _weights: Array2<f64>, // layer_size,
+    // The bias for each neuron. Should be added to the dot product of 
+    // previous weights and current weights
+    // CLARIFY: If firstly, weights are a matrix, so it should be the matrix product not dot product.
+    // Secondly, the weights of the previous layers are not used in the running calculation. The weights matrix represents
+    // the relationship between this layer and the previous
+    biases: Vec<f32>,
 
-    /// The bias for each node. Should be added to the sum of 
-    pub biases: Option<Vec<f32>>,
-    // _biases: Option<Array2<f64>>,
+    // The input from the previous layer ("x")
+    input : Vec<f32>,
+
+    // Values z = W*x + b
+    // This represents the output before the activation function is applied
+    z_values : Vec<f32>,
+
+    output : Vec<f32>,
 
     activation_function: ActivationFunction,
-    // _data: [f64; N] = [0.0; N];
-    // _weights: [f64; N] = [0.0; N];
-
-    // Layer()
-
-    // Layer 
-
 }
 
-// Add method for merging two layers, for use in convolutions
 impl Layer { 
-    pub fn new(
-        size: usize,
-        weights: Vec<Vec<f32>>,
-    ) -> Self {
-        // self._activation_function = ActivationFunction::None;
-        // self._biases = None;
-        assert!(weights.len() == size, "Number of rows (length of columns) in weight, {}, does not match output layer size, {}!", weights.len(), size);
+    /// initalizes random weights and biases, 
+    /// input size is the size of the previous layer
+    /// output size is the size of this layer (how many neurons in the layer)
+    fn new(input_size: usize, output_size: usize, activation: ActivationFunction) -> Self {
+        let mut rng = rand::thread_rng();
         
-        Self{
-            size: size,
+        // Randomly initialize weights and biases
+        let weights: Vec<Vec<f32>> = (0..output_size)
+            .map(|_| (0..input_size).map(|_| rng.gen_range(-0.5..0.5)).collect())
+            .collect();
+
+        let biases: Vec<f64> = (0..output_size).map(|_| rng.gen_range(-0.5..0.5)).collect();
+
+        Self {
+            size : input_size,
             weights,
-            biases : None,
-            activation_function : ActivationFunction::None,
+            biases,
+            input : vec![],
+            z_values : vec![],
+            output: vec![],
+            activation_function : activation,
         }
     }
 
-    pub fn calculate(self: &Self, prev_layer_out: Vec<f32>) -> Vec<f32> {
+    pub fn calculate(self: &Self, prev_layer_out: Vec<f64>) -> Vec<f64> {
         assert!(self.weights.len() == self.size, "Number of rows (length of columns) in weight, {}, does not match output layer size, {}!", self.weights.len(), self.size);
         
-        // Input vector is vertical
+        // Input vector is column major.
         let mut result: Vec<f32> = vec![0.0; self.size]; 
 
         // Col is the index of the layer vector
         for (col, weights_row) in self.weights.iter().enumerate() {
-            let mut sum: f32 = weights_row.iter().zip(&prev_layer_out).map(|(x, y)| x*y).sum();
-            if let Some(bias) = &self.biases {sum += bias[col]}
+            let mut sum: f32 = weights_row.iter()
+                .zip(prev_layer_out)
+                .map(|(x, y)| x*y)
+                .sum();
+            sum += self.biases[col];
             result[col] = sum;
         }
+        // Store the pre-activation values
+        self.z_values = result.clone();
+        
+        // we see a problem arise if "x" is too large or too small (saturated network)
+        // because the sigmoid will map it to -1 or 1, and the gradient
+        // may vanish as a result. There are techniques to combat this issue
+        // but we've initalized weights and biases to [-0.5, 0.5] for now.
+        match self.activation_function {
+            ActivationFunction::Softmax => {
+                // Find the maximum value for numerical stability
+                let max = result.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let exps: Vec<f64> = result.iter().map(|&x| (x - max).exp()).collect();
+                let sum: f64 = exps.iter().sum();
+                result = exps.iter().map(|&x| x / sum).collect();
+            },
+            _ => result.iter_mut().for_each(|x| *x = self.activation_function.calculate(*x)),
+        }
+        // Store results and return
+        self.output = result.clone();
         return result;
     }
 }
 
 
-enum NetworkDim {
-    Invalid = -1,
-    Network2D = 2,
-    Network3D = 3,
-}
+// enum NetworkDim {
+//     Invalid = -1,
+//     Network2D = 2,
+//     Network3D = 3,
+// }
 
 
 
 // #[derive(Clone)]
 pub struct ComputeNetwork<'a> {
-    _layers: Vec<Layer>,
-    state: Option<State<'a>>,
+    layers: Vec<Layer>,
+    learning_rate : f32;
+    // Optional since lazy initialized
+    gpu_state: Option<State<'a>>,
     compute: Option<Compute<f32>>,
+    input : Vec<f32>,
+    output: Vec<f32>,
 }
-
-// struct BufferData {
-//     prev_layer_size: u32,
-//     curr_layer_size: u32,
-//     weights_dims: [u32; 2],
-//     curr_layer_index: u32,
-//     // output_data_sizes: array<u32>
-// }
 
 #[repr(C)]
 // #[derive(Copy, Clone, Debug, /*bytemuck::Pod, bytemuck::Zeroable*/)]
@@ -332,17 +337,38 @@ where Self: Sized {
     fn new_from_file(_file_name: &str)-> std::io::Result<Self> {
         todo!();
     }
-    fn write_to_file(_file_name: &str)-> std::io::Result<()> {
-        todo!();
-    }
-    fn new() -> Self;
 
-    fn output_layer(self: &Self) -> Option<&Layer> {
+    pub fn write_to_file(file_name: &str) -> std::io::Result<()> {
+        todo!()
+    }
+
+    pub fn new() -> Self {
+        let mut network = Network {
+            layers : vec![],
+            learning_rate : 0.1,
+            input : vec![],
+            output : vec![],
+        };
+        // single layer neural network
+        let first_layer = Layer::new
+        (784, 400, ActivationFunction::Relu);
+        let output_layer = Layer::new
+        (400, 10, ActivationFunction::Softmax);
+        network.layers.push(first_layer);
+        network.layers.push(output_layer);
+        return network;
+    }
+
+    // pub fn first_layer(self: &Self) -> Option<&Layer> {
+    //     self.layers.first()
+    // }
+    
+    pub fn output_layer(self: &Self) -> Option<&Layer> {
         self.get_layers().last()
     }
 
     fn add_layer(self: &mut Self, layer: Layer) -> Result<(), String> {
-        match self.get_layers().last() {
+        match self.getlayers().last() {
             // This code might be wrong lol
             Some(prev_layer) if prev_layer.size != layer.weights[0].len() => {
                 return Err(std::format!(
@@ -370,7 +396,9 @@ where Self: Sized {
     }
 
     /// Each vector in output represents one individual layer's output
-    async fn calculate(self: &mut Self, input: Vec<f32>) -> Vec<Vec<f32>>;
+    /// Must return just the output layer's output
+    /// Must also ensure that layer inputs, z-values, and outputs are correctly updated, though isn't nesisarrily required to run layer.calculate()
+    async fn calculate(self: &mut Self, input: &Vec<f32>) -> Vec<f32>;
 }
 
 #[derive(Clone)]
@@ -403,7 +431,7 @@ impl Network for ClassicNetwork {
     }
 
     async fn calculate(self: &mut Self, input: Vec<f32>) -> Vec<Vec<f32>> {
-
+        self.input = input.clone();
         assert!(self.output_layer().expect("No layers!").size == 10, "output layer has incorrect size! Expected {}, found {}", 10, self.output_layer().expect("No layers!").size);
         
         // let curr_input_matrix:Array2<f64> = Array2::from_shape_vec((1,input.len()), input).expect("Input array bad!");
@@ -413,22 +441,44 @@ impl Network for ClassicNetwork {
 
         result.push(curr_input_matrix.clone());
 
-        for curr_layer in self._layers.iter() {
-            let raw = curr_layer.calculate(curr_input_matrix);
-            let cooked = raw.into_iter().map(|x| curr_layer.activation_function.calculate(x)).collect();
-            curr_input_matrix = cooked;
-            result.push(curr_input_matrix.clone());
+        for curr_layer in self.layers.iter_mut() {
+            curr_input = curr_layer.calculate(&curr_input);
         }
-
-        // let result: Vec<f32> = curr_input_matrix;
-        assert!(result.last().unwrap().len() == self._layers.last().unwrap().size, "Wrong sized output! Expected size, output layer size: {}, got size {}", self._layers.last().unwrap().size, result.last().unwrap().len());
-        
-        // normalize_output(&result)
-
-        result
-
-        // return curr_input_matrix.into_raw_vec_and_offset().try_into().expect("Could not convert!")
+        self.output = curr_input.clone();
+        return curr_input;
     } 
+    
+    // actual_classification is the vector of 10 values containing 0s 
+    // and 1 for the actual number the model was supposed to predict
+    pub fn backpropagate(&mut self, actual_classification: &Vec<f64>) -> f64 {
+        let fake_zero = 1e-10;
+        let loss: f64 = self
+            .output
+            .iter()
+            .zip(actual_classification)
+            .map(|(&output, &target)| -(target * (output.max(fake_zero).ln())))
+            .sum::<f64>();        
+        // Compute the gradient of the loss (cross-entrophy) bc we are using softmax
+        // gradient is with respect to pre-softmax values
+        // literally just sum of actual - predicted
+        let output_gradient: Vec<f64> = self
+            .output
+            .iter()
+            .zip(actual_classification)
+            .map(|(&output, &target)| output - target) // Gradient for softmax with cross-entropy
+            .collect();
+
+        // Perform backpropagation for each layer
+        let mut gradient = output_gradient; // Initialize with the gradient of the output layer
+        for i in (0..self.layers.len()).rev() {
+            gradient = self.layers[i].backpropagate(gradient, self.learning_rate);
+        }
+        return loss;
+    }
+
+    pub fn train(epochs : usize) {
+        todo!();
+    }
 }
 
 /// More positive weights are more green, and more negitive weights are more red. 
@@ -488,3 +538,6 @@ pub fn normalize_output(output: &Vec<f32>) -> Vec<f32> {
 
 // fn([[f64;28]; 28]);
 
+fn compute_loss(predicted : Vec<f64>, actual : Vec<f64>) -> f64 {
+    todo!();
+}
