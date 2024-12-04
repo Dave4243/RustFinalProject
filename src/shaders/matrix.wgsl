@@ -6,11 +6,17 @@
 //     weights: array<u32>,
 //     prev_layer: array<u32>,
 // };
-const E: f32 = 2.71828182845904523536028747135266250;
+// const E: f32 = 2.71828182845904523536028747135266250;
 
+
+// struct OutputLayerData {
+//     z_value: u32,
+//     layer_output: u32
+// };
 
 struct OutputData {
-    layer_output: array<u32>
+    z_value: f32,
+    layer_output: f32
 };
 
 // enum ActivationFunctions {
@@ -43,7 +49,8 @@ struct BufferData {
 @group(0) @binding(3) var<storage, read> buffer_data_buffer: BufferData;
 
 // Each row represents each layer output, including the initial values of the input layer!
-@group(0) @binding(0) var<storage, read_write> write_buffer: array<f32>;
+// @group(0) @binding(0) var<storage, read_write> write_buffer: array<f32>;
+@group(0) @binding(0) var<storage, read_write> write_buffer: array<OutputData>;
 
 fn is_outside_bounds(coord: vec3<u32>, bounds: vec3<u32>) -> bool {
     return coord.x >= u32(bounds.x) || coord.y >= u32(bounds.y) || coord.z >= u32(bounds.z);
@@ -65,20 +72,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var sum: f32 = 0f;  
 
     for (var i:u32=0; i<buffer_data_buffer.weights_dims.x; i++) {
-        sum += read_out(buffer_data_buffer.curr_layer_index-1, i) * read_weights(global_id.y, i);
+        sum += read_out_val(buffer_data_buffer.curr_layer_index-1, i) * read_weights(global_id.y, i);
     }
+    
+    // Write Z values
+    write_out_z(buffer_data_buffer.curr_layer_index, global_id.x, sum);
 
     // Run through activation function
     var cooked_sum: f32 = -0.0;
     switch(buffer_data_buffer.output_layer_sizes_and_activations[buffer_data_buffer.curr_layer_index].size) {
         case 0u: { // Sigmoid
             let B:f32 = 1.0;
-            cooked_sum = 1.0/(pow(E, -sum * B));
+            cooked_sum = 1.0/(exp(-sum * B));
             // cooked_sum = -0.0;
         }
         case 1u: { // Tanh
             // cooked_sum = -0.0;
-            cooked_sum = (pow(E,sum)-pow(E, -sum)) / (pow(E, sum) + pow(E, -sum));
+            cooked_sum = (exp(sum)-exp(-sum)) / (exp(sum) + exp(-sum));
         }
         case 2u: { // Relu
             // cooked_sum = -0.0;
@@ -91,11 +101,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
-    write_out(buffer_data_buffer.curr_layer_index, global_id.x, cooked_sum);
+    write_out_val(buffer_data_buffer.curr_layer_index, global_id.x, cooked_sum);
 
 }
 
-fn read_out(row: u32, col: u32) -> f32 {
+fn read_out_val(row: u32, col: u32) -> f32 {
     // if (col > buffer_data_buffer.weights_dims.x || row > buffer_data_buffer.weights_dims.y) {return -0.0;}
     // size 
 
@@ -106,18 +116,41 @@ fn read_out(row: u32, col: u32) -> f32 {
 
     if (col > buffer_data_buffer.output_layer_sizes_and_activations[row].size) {return -0.0;}
 
-    return write_buffer[col + row_offset];
+    return write_buffer[col + row_offset].layer_output;
+    // return write_buffer[col + row * buffer_data_buffer.weights_dims.x];
+}
+fn read_out_z(row: u32, col: u32) -> f32 {
+    // if (col > buffer_data_buffer.weights_dims.x || row > buffer_data_buffer.weights_dims.y) {return -0.0;}
+    // size 
+
+    var row_offset:u32 = 0;
+    for (var i:u32=0; i<row; i++) {
+        row_offset += buffer_data_buffer.output_layer_sizes_and_activations[i].size;
+    }
+
+    if (col > buffer_data_buffer.output_layer_sizes_and_activations[row].size) {return -0.0;}
+
+    return write_buffer[col + row_offset].z_value;
     // return write_buffer[col + row * buffer_data_buffer.weights_dims.x];
 }
 
-fn write_out(row: u32, col: u32, data: f32) {
+fn write_out_val(row: u32, col: u32, data: f32) {
     // This is also wrong
     var row_offset:u32 = 0;
     for (var i:u32=0; i<row; i++) {
         row_offset += buffer_data_buffer.output_layer_sizes_and_activations[i].size;
     }
 
-    write_buffer[col + row_offset] = data;
+    write_buffer[col + row_offset].layer_output = data;
+}
+fn write_out_z(row: u32, col: u32, data: f32) {
+    // This is also wrong
+    var row_offset:u32 = 0;
+    for (var i:u32=0; i<row; i++) {
+        row_offset += buffer_data_buffer.output_layer_sizes_and_activations[i].size;
+    }
+
+    write_buffer[col + row_offset].z_value = data;
 }
 
 fn read_weights(row: u32, col: u32) -> f32 {

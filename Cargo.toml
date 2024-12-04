@@ -10,6 +10,8 @@ itertools = "0.13.0"
 na = "0.32.2"
 nalgebra = "0.33.1"
 ndarray = "0.16.1"
+# FIX: Link is for path native to my (Max's) computer
+# I will push the source code for my package when needed.
 rust_webgpu = { path = "/home/cwd/Desktop/projects/rust/rust-webgpu" }
 tokio = {version = "1.41.1", features = ["macros", "rt-multi-thread"]}
 rand = "0.8"
