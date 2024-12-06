@@ -87,7 +87,8 @@ impl Layer {
         let biases: Vec<f32> = (0..output_size).map(|_| rng.gen_range(-0.5..0.5)).collect();
 
         Self {
-            size : input_size,
+            // size : input_size,
+            size : output_size,
             weights,
             biases,
             input : vec![],
@@ -99,7 +100,7 @@ impl Layer {
 
     pub fn calculate(self: &mut Self, prev_layer_out: &Vec<f32>) -> Vec<f32> {
         assert!(self.weights.len() == self.size, "Number of rows (length of columns) in weight, {}, does not match output layer size, {}!", self.weights.len(), self.size);
-       self.input = prev_layer_out.clone();
+        self.input = prev_layer_out.clone();
 
         // Input vector is column major.
         let mut result: Vec<f32> = vec![0.0; self.size]; 
@@ -372,7 +373,8 @@ impl Network for ComputeNetwork<'static> {
         }
 
         // FINISH: FIXING TO OUTPUT Z VALUES AND VALUES SEPARATELY | DONE
-        // FINISH: ENSURE THAT INPUT IS PUT INTO THE layer_output rather than z_value | DONE      
+        // FINISH: ENSURE THAT INPUT IS PUT INTO THE layer_output rather than z_value | DONE     
+        // FINISH: UPDATE LAYER INPUTS AND OUTPUTS 
         // let mut flat_output: Vec<OutputData> = compute.read_output(&state.queue, &state.device).await
         //     .as_slice().chunks(2)
         //     .map(|c| OutputData{z_value: c[0], layer_output: c[1]})

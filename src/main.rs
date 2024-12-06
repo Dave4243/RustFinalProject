@@ -11,8 +11,8 @@ async fn main() {
     // let file_name = "data/training-data/archive/...";
 
     // let mut network: ClassicNetwork = Network::new();
-    // let mut network: ComputeNetwork = Network::new_default();
-    let mut network: ClassicNetwork = Network::new_default();
+    let mut network: ComputeNetwork = Network::new_default();
+    // let mut network: ClassicNetwork = Network::new_default();
 
     // let weights: Vec<Vec<f32>> = vec![vec![0.0; 28*28]; 28*28];
     // let mut layer = Layer::new(28*28, weights);

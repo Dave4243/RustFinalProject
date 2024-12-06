@@ -1,0 +1,3 @@
+- Ensure that `ComputeNetwork::calculate` updates layer inputs, outputs, and z_values
+- Add biasies to compute network
+- Perform backprop on gpu
