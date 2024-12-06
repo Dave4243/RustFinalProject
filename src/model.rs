@@ -1,6 +1,8 @@
 use std::f64::consts::E;
 use std::vec::Vec;
 use rand::Rng;
+use std::fs::File;
+use std::io::{self, BufReader, Read};
 
 const IMG_WIDTH: usize = 28;
 const IMG_HEIGHT: usize = 28;
@@ -54,8 +56,6 @@ pub struct Layer {
     // Values z = W*x + b
     z_values : Vec<f64>,
 
-    output : Vec<f64>,
-
     activation_function: ActivationFunction,
 }
 
@@ -67,28 +67,32 @@ impl Layer {
         let mut rng = rand::thread_rng();
         
         // Randomly initialize weights and biases
-        let weights: Vec<Vec<f64>> = (0..output_size)
-            .map(|_| (0..input_size).map(|_| rng.gen_range(-0.5..0.5)).collect())
-            .collect();
+        // let weights: Vec<Vec<f64>> = (0..output_size)
+        //     .map(|_| (0..input_size).map(|_| rng.gen_range(-0.5..0.5)).collect())
+        //     .collect();
+        let mut rng = rand::thread_rng(); 
+        let limit = (2.0 / input_size as f64).sqrt(); 
+        let weights: Vec<Vec<f64>> = (0..output_size) .map(|_| (0..input_size).map(|_| rng.gen_range(-limit..limit)).collect()) .collect();
 
-        let biases: Vec<f64> = (0..output_size).map(|_| rng.gen_range(-0.5..0.5)).collect();
+        let biases: Vec<f64> = vec![0.0; output_size];
 
         Self {
             size : input_size,
             weights,
             biases,
-            input : vec![],
+            input : vec![0.0; input_size],
             z_values : vec![],
-            output: vec![],
             activation_function : activation,
         }
     }
 
     // function to initiate a forward pass through this layer of neurons
     pub fn calculate(&mut self, prev_layer_out: &Vec<f64>) -> Vec<f64> {
+        // println!("Layer size: Num neurons (Output){}, Num weights{}", self.weights.len(), self.weights[0].len());
+        // println!("Previous layer output: {}", prev_layer_out.len());
         self.input = prev_layer_out.clone();
         // Input vector is vertical
-        let mut result: Vec<f64> = vec![0.0; self.size]; 
+        let mut result: Vec<f64> = vec![0.0; self.weights.len()]; 
 
         // Col is the index of the layer vector
         for (col, weights_row) in self.weights.iter().enumerate() {
@@ -101,6 +105,7 @@ impl Layer {
         }
         // Store the pre-activation values
         self.z_values = result.clone();
+        // println!("Z values: {:?}", self.z_values);
         
         // we see a problem arise if "x" is too large or too small (saturated network)
         // because the sigmoid will map it to -1 or 1, and the gradient
@@ -117,7 +122,6 @@ impl Layer {
             _ => result.iter_mut().for_each(|x| *x = self.activation_function.calculate(*x)),
         }
         // Store results and return
-        self.output = result.clone();
         return result;
     }
 
@@ -153,26 +157,29 @@ impl Layer {
             ActivationFunction::Softmax => dLdz = output_gradient,
             _ => return Vec::new(),
         }
+        println!("DLDZ: {:?}", dLdz);
 
+        // update biases, dL/db = dL/dz * dz/dB = dL/dz * 1 = dL/dz
+        for i in 0..self.biases.len() {
+            let mut dLdb = dLdz[i];
+            println!("DLDB for neuron {}: {} ", i, dLdb);
+            self.biases[i] -= learning_rate * dLdb;
+        }
         // update weights
         // dL/dW = dL/dz * dz/dW = dL/dz * input
         for i in 0..self.weights.len() {
             for j in 0..self.weights[i].len() {
-                let dLdW = dLdz[i] * self.input[j];
+                let mut dLdW = dLdz[i] * self.input[j];
+                println!("DLDW for neuron {}, weight {}: {}", i, j, dLdW);
                 self.weights[i][j] -= learning_rate * dLdW;
             }
         }
-
-        // update biases, dL/db = dL/dz * dz/dB = dL/dz * 1 = dL/dz
-        for i in 0..self.biases.len() {
-            self.biases[i] -= learning_rate * dLdz[i];
-        }
-
         // computes gradient with respect to input (output of prev layer)
         let mut dLdx = vec![0.0; self.input.len()];
         for j in 0..self.input.len() {
             for i in 0..self.weights.len() {
                 dLdx[j] += dLdz[i] * self.weights[i][j];
+                println!("DLDX FOR OUTPUT NEURON {}: {}", j, dLdx[j]);
             }
         }
         // pass this gradient back
@@ -184,42 +191,31 @@ impl Layer {
 pub struct Network {
     layers: Vec<Layer>,
     learning_rate : f64,
-    input : Vec<f64>,
-    output : Vec<f64>,
 }
 
 impl Network{
-    /// Generates network and auto fills layers from some kind of file storing weights and biases
-    /// 
-    /// Perhaps we use a file organized like this:
-    /// 
-    /// Header with magic number, how many layers, nodes per layer
-    /// 
-    /// With use a file with 8 * 28 bytes per weight row, with 28 rows (assuming layers the same size as our input layer).
-    /// 
-    /// Finally have an optional section with a delimeter and then N rows of the biases, with N being the number of layers.
-    /// 
-    /// 
-    pub fn new_from_file(file_name: &str) -> std::io::Result<Self> {
-        todo!()
-    }
-
-    pub fn write_to_file(file_name: &str) -> std::io::Result<()> {
-        todo!()
-    }
-
     pub fn new() -> Self {
         let mut network = Network {
             layers : vec![],
-            learning_rate : 0.1,
-            input : vec![],
-            output : vec![],
+            learning_rate : 0.01,
         };
         // single layer neural network
-        let first_layer = Layer::new
-        (784, 400, ActivationFunction::Relu);
-        let output_layer = Layer::new
-        (400, 10, ActivationFunction::Softmax);
+        // let first_layer = Layer::new
+        // (784, 512, ActivationFunction::Relu);
+        // let output_layer = Layer::new
+        // (512, 10, ActivationFunction::Softmax);
+        // network.layers.push(first_layer);
+        // network.layers.push(output_layer);
+        let mut first_layer = Layer::new
+        (2, 2, ActivationFunction::Relu);
+        first_layer.weights[0] = vec!{0.1, -0.2};
+        first_layer.weights[1] = vec!{0.3, 0.4};
+        first_layer.biases = vec!{0.01, 0.02};
+        let mut output_layer = Layer::new
+        (2, 2, ActivationFunction::Softmax);
+        output_layer.weights[0] = vec!{0.1, 0.2};
+        output_layer.weights[1] = vec!{-0.1, 0.3};
+        output_layer.biases = vec!{0.01, 0.02};
         network.layers.push(first_layer);
         network.layers.push(output_layer);
         return network;
@@ -262,36 +258,35 @@ impl Network{
         self.layers.last_mut().expect("No layers in network!").activation_function = func.clone();
     }
 
+    
     pub fn calculate(&mut self, input: &Vec<f64>) -> Vec<f64> {
-        self.input = input.clone();
         let mut curr_input: Vec<f64> = input.clone();
 
         for curr_layer in self.layers.iter_mut() {
             curr_input = curr_layer.calculate(&curr_input);
         }
-        self.output = curr_input.clone();
         return curr_input;
-    } 
+    }
     
     // actual_classification is the vector of 10 values containing 0s 
     // and 1 for the actual number the model was supposed to predict
-    pub fn backpropagate(&mut self, actual_classification: &Vec<f64>) -> f64 {
+    pub fn backpropagate(&mut self, output: &Vec<f64>, actual_classification: &Vec<f64>) -> f64 {
         let fake_zero = 1e-10;
-        let loss: f64 = self
-            .output
+        let loss: f64 = output
             .iter()
             .zip(actual_classification)
             .map(|(&output, &target)| -(target * (output.max(fake_zero).ln())))
             .sum::<f64>();        
+
         // Compute the gradient of the loss (cross-entrophy) bc we are using softmax
         // gradient is with respect to pre-softmax values
         // literally just sum of actual - predicted
-        let output_gradient: Vec<f64> = self
-            .output
+        let output_gradient: Vec<f64> = output
             .iter()
             .zip(actual_classification)
             .map(|(&output, &target)| output - target) // Gradient for softmax with cross-entropy
             .collect();
+        // println!("{:?}", output_gradient);
 
         // Perform backpropagation for each layer
         let mut gradient = output_gradient; // Initialize with the gradient of the output layer
@@ -301,8 +296,72 @@ impl Network{
         return loss;
     }
 
-    pub fn train(epochs : usize) {
-        todo!();
+    // REAL TRAIN
+    // pub fn train(&mut self, images_filename: &str, labels_filename: &str, iterations: usize) -> io::Result<()> {
+    //     let mut image_reader = ImageReader::new(images_filename)?;
+    //     let mut label_reader = LabelReader::new(labels_filename)?;
+    
+    //     let input_size = 28 * 28;
+    //     let mut average_loss = 0.0;
+    //     for iteration in 0..iterations {
+    //         let image = image_reader.read_next_image().unwrap().unwrap();
+    //         let label = label_reader.read_next_label().unwrap().unwrap();
+
+    //         let prediction = self.calculate(&image);
+    //         let mut actual_classification = vec![0.0; 10];
+    //         actual_classification[label as usize] = 1.0;
+
+
+    //         let loss = self.backpropagate(&prediction, &actual_classification);
+    //         // println!();
+    //         average_loss += loss;
+    //         if iteration % 50 == 0 {
+    //             average_loss /= 50.0;
+    //             println!("Iteration {} completed, Average Loss over last 50 iterations = {}", iteration, average_loss);
+                
+    //             self.learning_rate *= 0.99;
+    //             average_loss = 0.0;
+    //         }
+    //     }
+    
+    //     Ok(())
+    // }
+
+    // test train
+    pub fn train(&mut self, images_filename: &str, labels_filename: &str, iterations: usize) -> io::Result<()> {
+        let mut image_reader = ImageReader::new(images_filename)?;
+        let mut label_reader = LabelReader::new(labels_filename)?;
+    
+        let input_size = 28 * 28;
+        let mut average_loss = 0.0;
+
+        for iteration in 0..iterations {
+            let input = vec!{1.0, 2.0};
+
+            let output = self.calculate(&input);
+            for layer in &self.layers {
+                println!("Layer output: {:?}", layer.input);
+                println!("Layer z-values {:?}", layer.z_values);
+            }
+            println!("Output: {:?}", output);
+            // let mut actual_classification = vec![0.0; 10];
+            // actual_classification[label] = 1.0;
+            let actual_classification = vec!{0.0, 1.0};
+
+            let loss = self.backpropagate(&output, &actual_classification);
+            println!("Loss: {}", loss);
+            // println!();
+            // average_loss += loss;
+            // if iteration % 50 == 0 {
+            //     average_loss /= 50.0;
+            //     println!("Iteration {} completed, Average Loss over last 50 iterations = {}", iteration, average_loss);
+                
+            //     self.learning_rate *= 0.99;
+            //     average_loss = 0.0;
+            // }
+        }
+    
+        Ok(())
     }
 }
 
@@ -313,56 +372,88 @@ fn weights_to_ppm(file_name: &str) {
     todo!();
 }
 
-
-/// Each image is 28x28 pixels, with values from 0 to 255
-/// 
-/// Each row of the file is its own digit image with 748 bytes
-/// 
-/// Should return a 28x28 array of values corresponding to the image on the given row of the file
-fn ubyte_file_read(input_file: &str, row:usize) -> [[f64;IMG_WIDTH]; IMG_HEIGHT] {
-    todo!();
+struct ImageReader {
+    reader: BufReader<File>,
+    image_size: usize,
 }
 
+impl ImageReader {
+    fn new(filename: &str) -> io::Result<Self> {
+        let file = File::open(filename)?;
+        let mut reader = BufReader::new(file);
 
-/// Scores output of function. Ideally a more acurate 
-pub trait ScoreFunction {
-    fn calculate(&self) -> f64;
-}
+        // Read the magic number
+        let mut buffer = [0u8; 4];
+        reader.read_exact(&mut buffer)?;
+        let magic_number = u32::from_be_bytes(buffer);
+        if magic_number != 2051 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid magic number"));
+        }
+        // Read the number of images (not used directly here)
+        reader.read_exact(&mut buffer)?;
 
-// pub fn ScoreFunction() {
-//     todo!();
-// }
+        // Read the number of rows
+        reader.read_exact(&mut buffer)?;
+        let num_rows = u32::from_be_bytes(buffer) as usize;
 
-/// Accepts an array reference. Each element of the array is the relative probability of that digit digit being selected.
-/// 
-/// The output's indexes match to their corresponding digit, so a bigger value for 0, means a bigger chance of the digit being tested being a zero.
-/// 
-/// After normalization, each value should be between 0 and 1, such that the values maintain their ratio and the sum of all the values sum to 1
-/// 
-/// This ideally is done by dividing each value by the magnitude of the 10th dimensional array
-/// 
-/// If all input values are 0, returns all 0.0
-///
-/// Returns the normalized array. 
-fn normalize_output(output: &Vec<f64>) -> Vec<f64> {
-// fn normalize_output(output: &[f64; 10]) -> [f64;10] {
-    let size: usize = output.len();
-    let sum: f64 = output.iter().sum();
-    
-    // if sum == 0.0 {return [0.0; 10]}
-    if sum == 0.0 {return vec![0.0; size];}
-    
-    // let mut result: [f64; 10] = [0.0; 10];
-    let mut result: Vec<f64> = Vec::with_capacity(size);
-    for val in output.iter() {
-        result.push(val/sum);
-        // result[i] = val/sum;
+        // Read the number of columns
+        reader.read_exact(&mut buffer)?;
+        let num_cols = u32::from_be_bytes(buffer) as usize;
+        // Verify dimensions are 28x28
+        if num_rows != 28 || num_cols != 28 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected 28x28 images"));
+        }
+        let image_size = num_rows * num_cols;
+
+        Ok(ImageReader { reader, image_size })
     }
-    result
+
+    fn read_next_image(&mut self) -> io::Result<Option<Vec<f64>>> {
+        let mut buffer = vec![0u8; self.image_size];
+        let bytes_read = self.reader.read(&mut buffer)?;
+
+        if bytes_read == 0 {
+            return Ok(None); // End of file
+        }
+
+        let image: Vec<f64> = buffer.iter().map(|&x| x as f64 / 255.0).collect();
+        Ok(Some(image))
+    }
 }
 
-// fn([[f64;28]; 28]);
+struct LabelReader {
+    reader: BufReader<File>,
+    num_labels: usize,
+}
 
-fn compute_loss(predicted : Vec<f64>, actual : Vec<f64>) -> f64 {
-    todo!();
+impl LabelReader {
+    fn new(filename: &str) -> io::Result<Self> {
+        let file = File::open(filename)?;
+        let mut reader = BufReader::new(file);
+
+        // Read the header
+        let mut buffer = [0u8; 4];
+        reader.read_exact(&mut buffer)?;
+        let magic_number = u32::from_be_bytes(buffer);
+        if magic_number != 2049 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid magic number"));
+        }
+
+        // Read the number of labels
+        reader.read_exact(&mut buffer)?;
+        let num_labels = u32::from_be_bytes(buffer) as usize;
+
+        Ok(LabelReader { reader, num_labels })
+    }
+
+    fn read_next_label(&mut self) -> io::Result<Option<u8>> {
+        let mut buffer = [0u8; 1];
+        let bytes_read = self.reader.read(&mut buffer)?;
+
+        if bytes_read == 0 {
+            return Ok(None); // End of file
+        }
+
+        Ok(Some(buffer[0]))
+    }
 }
