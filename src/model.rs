@@ -158,7 +158,15 @@ impl Layer {
             _ => return Vec::new(),
         }
         println!("DLDZ: {:?}", dLdz);
-
+        // computes gradient with respect to input (output of prev layer)
+        let mut dLdx = vec![0.0; self.input.len()];
+        for j in 0..self.input.len() {
+            for i in 0..self.weights.len() {
+                dLdx[j] += dLdz[i] * self.weights[i][j];
+                println!("DLDX FOR OUTPUT NEURON {}: {}", j, dLdx[j]);
+            }
+        }
+        
         // update biases, dL/db = dL/dz * dz/dB = dL/dz * 1 = dL/dz
         for i in 0..self.biases.len() {
             let mut dLdb = dLdz[i];
@@ -172,14 +180,6 @@ impl Layer {
                 let mut dLdW = dLdz[i] * self.input[j];
                 println!("DLDW for neuron {}, weight {}: {}", i, j, dLdW);
                 self.weights[i][j] -= learning_rate * dLdW;
-            }
-        }
-        // computes gradient with respect to input (output of prev layer)
-        let mut dLdx = vec![0.0; self.input.len()];
-        for j in 0..self.input.len() {
-            for i in 0..self.weights.len() {
-                dLdx[j] += dLdz[i] * self.weights[i][j];
-                println!("DLDX FOR OUTPUT NEURON {}: {}", j, dLdx[j]);
             }
         }
         // pass this gradient back
