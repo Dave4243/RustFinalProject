@@ -3,8 +3,44 @@ use std::{error::Error, io, process};
 use na::{U2, U3, Dynamic, ArrayStorage, VecStorage, Matrix};
 use std::f64::consts::E;
 use std::vec::Vec;
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufRead};
+use byteorder::{BigEndian, ReadBytesExt};
+use std::io::Cursor;
 
 // std::f64::consts::E;
+
+pub struct UbyteFile {
+    sizes: Vec<i32>;
+    data: Vec<u8>;
+}
+
+impl UbyteFile {
+    fn new(f: &str) -> Result<UbyteFile, Error> {
+        let mut file = File::open(input_file)?;
+        let mut vec = Vec::new();
+        file.read_to_end(vec)?;
+        let mut r = Cursor::new(vec);
+
+        let mut sizes: Vec<i32> = Vec::new();
+        let mut data: Vec<u8> = Vec::new();
+
+        let magic_number = r.read_i32::<BigEndian>()?;
+        match magic_number {
+            // 2049 => {
+            //     sizes.push(r.read_i32::<BigEndian>()?);
+            // }
+            2051 => {
+                sizes.push(r.read_i32::<BigEndian>()?);
+                sizes.push(r.read_i32::<BigEndian>()?);
+                sizes.push(r.read_i32::<BigEndian>()?);
+            }
+            _ => panic!();
+        }
+        r.read_to_end(data)?;
+        Ok(UbyteFile{sizes, data})
+    }
+}
 
 // pub mod model {
 // }
@@ -88,7 +124,11 @@ impl<'a> Network<'a> {
     }
 
     pub fn write_to_file(file_name: &str) -> std::io::Result<()> {
-        todo!()
+        //let mut file = File::create("output.txt")?;
+        let file = OpenOptions::new().append(true).open(file_name).expect("Unable to open file");
+        file.write_all(b"{}", 3021 as i32)?;
+        
+        Ok(())
     }
 
     pub fn new() -> Self {
@@ -131,8 +171,23 @@ fn weights_to_ppm(file_name: &str) {
 /// Each row of the file is its own digit image with 748 bytes
 /// 
 /// Should return a 28x28 array of values corresponding to the image on the given row of the file
+// fn ubyte_file_read(input_file: &str, row:usize) -> [[f64;28]; 28] {
+//     let data = &UbyteFile::new(&str)
+// }
+
 fn ubyte_file_read(input_file: &str, row:usize) -> [[f64;28]; 28] {
-    todo!();
+    let input = &UbyteFile::new(&str);
+    let image_shape = (input.sizes[1] * input.sizes[2]) as usize;
+    let index = image_shape*row;
+    let read_file_vec: Vec<Vec<f64>> = Vec::new();
+    for i in 0..input.sizes[1] {
+        read_file_vec.push(Vec::new());
+        for j in 0..input.sizes[2] {
+            let data: f64 = input.data[i] as f64 / 255;
+            read_file_vec[i].push(data);
+        }
+    }
+    Ok(read_file_vec)
 }
 
 /// Scores output of function. Ideally a more acurate 
