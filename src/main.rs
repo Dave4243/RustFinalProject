@@ -2,11 +2,9 @@ mod model;
 
 use crate::model::Network;
 
-// use model;
-
 fn main() {
     let mut network = Network::new();
-    network.train(
-        r"data\t10k-images.idx3-ubyte"
-    , r"data\t10k-labels.idx1-ubyte", 1000);
+    let _ = network.train(
+        r"data\train-images.idx3-ubyte"
+    , r"data\train-labels.idx1-ubyte", 10000);
 }
