@@ -133,6 +133,8 @@ pub struct Layer {
 
     z_values : Vec<f64>,
 
+    output : Vec<f64>,
+
     activation_function: ActivationFunction,
 }
 
@@ -324,6 +326,7 @@ impl Network{
             let mut biases: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
             let mut input: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
             let mut z_values: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+            let mut output: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
             // loop {
             //     let biases_label = lines.next().unwrap();
             //     if biases_label?.trim().is_empty() {
@@ -339,6 +342,7 @@ impl Network{
                 biases: biases,
                 input: input,
                 z_values: z_values,
+                output: output,
                 activation_function: activation_function,
             })
         }
@@ -346,6 +350,8 @@ impl Network{
         let network = Self {
             layers: layers,
             learning_rate: learning_rate,
+            input: vec![],
+            output: vec![],
         };
         Ok(network)
         // Ok(Network{_input_layer = layers, learinng_rate = learning_rate})
@@ -401,6 +407,10 @@ impl Network{
             writeln!(file, "Z-values");
             let z_str = layer.z_values.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
             writeln!(file, "[{}]", z_str);
+
+            writeln!(file, "Output");
+            let output_str = layer.output.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
+            writeln!(file, "[{}]", output_str);
 
             writeln!(file, "")?;
         }

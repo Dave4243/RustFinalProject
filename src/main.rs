@@ -17,11 +17,13 @@ fn main() {
     // }
 
     let mut input = String::new();
+    let mut network;
 
     if items[selection] == "Random" {
-        let mut network = Network::new();
+        network = Network::new();
     }
     else {
+        println!("Link the file you would like to build the network out of: ");
         match io::stdin().read_line(&mut input) {
             Ok(n) => {
                 println!("{} bytes read", n);
@@ -29,16 +31,25 @@ fn main() {
             }
             Err(error) => println!("error: {error}"),
         }
-        let path = std::env::args().nth(1).expect("no path given");
-        let pattern = std::env::args().nth(1).expect("no pattern given");
+        let mut network_file = String::new();
+        let n = io::stdin().read_line(&mut network_file).expect("no path given");
+        println!("{} bytes read", n);
+        println!("{}", network_file);
+        //let pattern = std::env::args().nth(1).expect("no pattern given");
         // Sigmoid(1.0, 1.0, 2.0);
     
-        let file_name = "";
-    
-        let mut network = Network::new();
+        network = Network::new();
+        network.new_from_file(&network_file);
+
+        //network.calculate()    
     
         //let layer = Layer::new();
     
-        network.add_layer(layer);  
+        //network.add_layer(layer);  
     }
+    println!("Link the file you would like to train the model on: ");
+    let mut train_file = String::new();
+    let n = io::stdin().read_line(&mut train_file).expect("no path given");
+    println!("{} bytes read", n);
+    println!("{}", train_file);
 }
