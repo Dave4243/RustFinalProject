@@ -1,7 +1,7 @@
 mod model;
 
-use dialoguer::MultiSelect;
-use crate::model::{Layer, Sigmoid, Network};
+use dialoguer::Select;
+use crate::model::{Layer, Network};
 use std::io;
 
 // use model;
@@ -9,32 +9,36 @@ use std::io;
 fn main() {
 
     let items = vec!["Random", "File"];
-    let selection = MultiSelect::new().with_prompt("Choose a mode").items(&items).interact().unwrap();
-    println!("You chose: ");
+    let selection = Select::new().with_prompt("Choose how to build the network").items(&items).interact().unwrap();
+    // println!("You chose: {}", items[selection]);
 
-    for i in selection {
-        println!("{}", items[i]);
-    }
+    // for selected in selection {
+    //     println!("{}", items[selected]);
+    // }
 
     let mut input = String::new();
-    match io::stdin().read_line(&mut input) {
-        Ok(n) => {
-            println!("{} bytes read", n);
-            println!("{}", input);
-        }
-        Err(error) => println!("error: {error}"),
+
+    if items[selection] == "Random" {
+        let mut network = Network::new();
     }
-    let path = std::env::args().nth(1).expect("no path given");
-    let pattern = std::env::args().nth(1).expect("no pattern given");
-    // Sigmoid(1.0, 1.0, 2.0);
-
-    let file_name = "";
-
-    let mut network = Network::new();
-
-    let layer = Layer::new();
-
-    network.add_layer(layer);    
-
-    // println!("Hello, world!");
+    else {
+        match io::stdin().read_line(&mut input) {
+            Ok(n) => {
+                println!("{} bytes read", n);
+                println!("{}", input);
+            }
+            Err(error) => println!("error: {error}"),
+        }
+        let path = std::env::args().nth(1).expect("no path given");
+        let pattern = std::env::args().nth(1).expect("no pattern given");
+        // Sigmoid(1.0, 1.0, 2.0);
+    
+        let file_name = "";
+    
+        let mut network = Network::new();
+    
+        //let layer = Layer::new();
+    
+        network.add_layer(layer);  
+    }
 }
