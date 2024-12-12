@@ -1,7 +1,7 @@
 use std::vec::Vec;
 use rand::Rng;
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Write, Read};
 #[derive(Copy, Clone)]
 pub enum ActivationFunction {
     Relu,
@@ -144,6 +144,131 @@ impl Network{
         return network;
     }
 
+    pub fn new_from_file(&mut self, file_name: &str) -> std::io::Result<Self> {
+        let file = File::open(file_name)?;
+        let reader = io::BufReader::new(file);
+
+        let mut layers = Vec::new();
+        let mut lines = reader.lines();
+        
+        let magic_number = lines.next().unwrap()?.trim().parse::<i32>().expect("Failed to parse magic number");
+        // reader.read_line(&mut magic_number_str);
+        // let magic_number: i32 = magic_number_str.trim().parse::<i32>().expect("Failed to parse magic number");
+        if magic_number != 3021 {
+            panic!("Magic number is invalid");
+        }
+
+        let learning_rate: f64 = lines.next().unwrap()?.trim().parse::<f64>().expect("Failed to parse learning rate");
+        let num_layers: usize = lines.next().unwrap()?.trim().parse::<usize>().expect("Failed to parse number of nodes");
+        
+        // let mut layer_size: usize = 0;
+
+        for _ in 0..num_layers {
+            //let layer_size: usize = lines.next().unwrap()?.parse().unwrap();
+            // let layer_size = lines.next().unwrap()?;
+            // let size: usize = layer_size.split_whitespace().last().unwrap().parse::<usize>().unwrap();
+
+            let activation_function = match lines.next().unwrap()?.as_str() {
+                // "Activation function: Sigmoid" => ActivationFunction::Sigmoid,
+                // "Activation function: Tanh" => ActivationFunction::Tanh,
+                "Activation function: Relu" => ActivationFunction::Relu,
+                "Activation function: Softmax" => ActivationFunction::Softmax,
+                // "Activation function: None" => ActivationFunction::None,
+                _ => panic!("Unknown activation function"),
+            };
+
+            let mut weights = Vec::new();
+            while let Some(weight_line) = lines.next() {
+                let weights_label = weight_line?;
+                if weights_label.trim().is_empty() {
+                    break;
+                }
+                let weights_str = lines.next().unwrap()?;
+                let weights_vec: Vec<f64> = weights_str.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+                weights.push(weights_vec);
+            }
+
+            let mut biases: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+            let mut input: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+            let mut z_values: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+            // let mut output: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+            layers.push(Layer { 
+                // size: size,
+                weights: weights,
+                biases: biases,
+                input: input,
+                z_values: z_values,
+                // output: output,
+                activation_function: activation_function,
+            })
+        }
+
+        let network = Self {
+            layers: layers,
+            learning_rate: learning_rate,
+            // input: vec![],
+            // output: vec![],
+        };
+        Ok(network)
+        // Ok(Network{_input_layer = layers, learinng_rate = learning_rate})
+        // for line in lines {
+        //     if line.trim().is_empty(){
+        //         layers.push(Layer {
+        //             size: layer_size,
+        //             weights: current_layer_weights.clone(),
+        //             biases: current_layer_biases.clone(),
+        //         });
+        //         layer_size = 0;
+        //         current_layer_weights.clear();
+        //         current_layer_biases.clear();
+        //     }
+        // }
+    }
+
+    pub fn write_to_file(&self, file_name: &str) -> std::io::Result<()> {
+        let mut file = File::create(file_name)?;
+        // let file = OpenOptions::new().append(true).open(file_name).expect("Unable to open file");
+        // file.write_all(b"{}", 3021 as i32)?;
+        writeln!(file, "{}", 3021 as i32)?;
+        writeln!(file, "{}", self.learning_rate as f64)?;
+        writeln!(file, "{}", self.layers.len() as usize)?;
+        for layer in &self.layers {
+            // writeln!(file, "Layer size: {}", layer.size);
+            match &layer.activation_function {
+                // ActivationFunction::Sigmoid => writeln!(file, "Activation function: Sigmoid")?,
+                // ActivationFunction::Tanh => writeln!(file, "Activation function: Tanh")?,
+                ActivationFunction::Relu => writeln!(file, "Activation function: Relu")?,
+                ActivationFunction::Softmax => writeln!(file, "Activation function: Softmax")?,
+                // ActivationFunction::None => writeln!(file, "Activation function: None")?,
+            }
+            for weight in &layer.weights {
+                writeln!(file, "Weights")?;
+                let weight_str = weight.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(", ");
+                writeln!(file, "[{}]", weight_str)?;
+            }
+
+            writeln!(file, "Bias")?;
+            let bias_str = layer.biases.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
+            writeln!(file, "[{}]", bias_str)?;
+
+            writeln!(file, "Input layer")?;
+            let input_str = layer.input.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
+            writeln!(file, "[{}]", input_str)?;
+
+            writeln!(file, "Z-values")?;
+            let z_str = layer.z_values.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
+            writeln!(file, "[{}]", z_str)?;
+
+            // writeln!(file, "Output");
+            // let output_str = layer.output.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
+            // writeln!(file, "[{}]", output_str);
+
+            writeln!(file, "")?;
+        }
+        
+        Ok(())
+    }
+
     pub fn calculate(&mut self, input: &Vec<f64>) -> Vec<f64> {
         let mut curr_input: Vec<f64> = input.clone();
 
@@ -186,7 +311,7 @@ impl Network{
         let mut images = Vec::new();
         let mut labels = Vec::new();
         let mut average_loss = 0.0;
-        let training_size = 2000;
+        let training_size = 1000;
         for i in 0..training_size {
             let image = image_reader.read_next_image().unwrap().unwrap();
             images.push(image);
