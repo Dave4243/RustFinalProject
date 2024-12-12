@@ -45,4 +45,4 @@ Possible Challenges:
   - DEBUGGING
 
 References
-  - 3b1b for conceptual understandings
+  - 3b1b for conceptual understandings (https://www.3blue1brown.com/topics/neural-networks)
