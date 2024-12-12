@@ -210,24 +210,10 @@ impl Network{
             // output: vec![],
         };
         Ok(network)
-        // Ok(Network{_input_layer = layers, learinng_rate = learning_rate})
-        // for line in lines {
-        //     if line.trim().is_empty(){
-        //         layers.push(Layer {
-        //             size: layer_size,
-        //             weights: current_layer_weights.clone(),
-        //             biases: current_layer_biases.clone(),
-        //         });
-        //         layer_size = 0;
-        //         current_layer_weights.clear();
-        //         current_layer_biases.clear();
-        //     }
-        // }
     }
 
     pub fn write_to_file(&self, file_name: &str) -> std::io::Result<()> {
         let mut file = File::create(file_name)?;
-        // let file = OpenOptions::new().append(true).open(file_name).expect("Unable to open file");
         // file.write_all(b"{}", 3021 as i32)?;
         writeln!(file, "{}", 3021 as i32)?;
         writeln!(file, "{}", self.learning_rate as f64)?;
