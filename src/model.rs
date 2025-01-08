@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use itertools::{interleave, Itertools};
+use itertools::{interleave, intersperse, Itertools};
 use std::{f32::consts::E, num::NonZero};
 use std::vec::Vec;
 
@@ -186,11 +186,13 @@ impl Layer {
 
 
 // #[derive(Clone)]
+// Add reference for buffers?
 pub struct ComputeNetwork<'a> {
     layers: Vec<Layer>,
     learning_rate : f32,
     // Optional since lazy initialized
     gpu_state: Option<State<'a>>,
+    // Contains buffers
     compute: Option<Compute<f32>>,
     input : Vec<f32>,
     output: Vec<f32>,
@@ -204,7 +206,8 @@ struct BufferData {
     curr_layer_index: u32,
     // Contains size of every layer, including input layer at index 0
     // This means it is not one to one with the networks layers vector!
-    output_layer_sizes_and_activations: Vec<u32>
+    // output_layer_sizes_and_activations: Vec<u32>
+    layer_datas: Vec<u32>
 }
 impl BufferData {
     pub fn new_from_layer(input_layer: &Vec<f32>, layers: &Vec<Layer>, index: u32) -> Self {
@@ -213,21 +216,40 @@ impl BufferData {
         let mut layer_sizes: Vec<u32> = Vec::new();
         layer_sizes.push(input_layer.len() as u32);
         layers.iter().for_each(|i| layer_sizes.push(i.size as u32));
-        
+
+        println!("layer sizes?: {:?}", layer_sizes);
+
         let mut layer_activations: Vec<u32> = Vec::new();
         layer_activations.push(input_layer.len() as u32);
-        layers.iter().for_each(|i| layer_sizes.push(i.activation_function as u32));
+        layers.iter().for_each(|i| layer_activations.push(i.activation_function as u32));
+
+        println!("layer activations?: {:?}", layer_activations);
+       
+        let mut sum = 0;
+        let mut layer_offsets: Vec<u32> = Vec::with_capacity(layer_sizes.len());
+        for size in &layer_sizes {
+            println!("size?: {}", size);
+            layer_offsets.push(sum);
+            sum += size;
+        }
+        println!("layer offsets?: {:?}", layer_offsets);
 
         return BufferData{
             weights_dims,
             curr_layer_index: index,
-            output_layer_sizes_and_activations: layer_sizes
-                .into_iter()
-                .interleave(layer_activations.into_iter())
-                .collect::<Vec<_>>()
+            layer_datas: 
+                itertools::izip!(layer_sizes, layer_activations, layer_offsets).flat_map(|(a, b, c)| [a, b, c]).collect()
+                // layer_sizes
+                // .into_iter()
+                // .interleave(layer_activations.into_iter())
+                // .chunks(2)
+                // .into_iter()()
+                // .interleave(layer_offsets.into_iter())
+                // // .flatten()
+                // .collect::<Vec<_>>()
         };
     }
-
+// itertools::izip!()
     pub fn to_bytes(self:&Self) -> Vec<u8> {
         let buffer_data_values = [
             self.weights_dims[0],
@@ -235,7 +257,7 @@ impl BufferData {
             self.curr_layer_index,
         ];
         let buffer_data_bytes: &[u8] = bytemuck::cast_slice(&buffer_data_values);
-        let output_layer_sizes_and_activations_bytes: &[u8] = bytemuck::cast_slice(&self.output_layer_sizes_and_activations);
+        let output_layer_sizes_and_activations_bytes: &[u8] = bytemuck::cast_slice(&self.layer_datas);
         let combined_buffer_data_bytes: Vec<u8> = buffer_data_bytes.iter().chain(output_layer_sizes_and_activations_bytes.iter()).copied().collect();
         
         return combined_buffer_data_bytes;
@@ -326,12 +348,14 @@ impl Network for ComputeNetwork<'static> {
             if weight_size > max_weight_size {max_weight_size = weight_size;}
         }
 
-        let buffer_data_buffer_size = size_of::<BufferData>();
+        let buffer_data_buffer_size = std::mem::size_of::<BufferData>();
 
-        let mut input_sizes: Vec<NonZero<u32>> = Vec::new(); //Vec::from_iter((0..2).map(|_| NonZero::new(16).unwrap()));      
+        // Sets buffer sizes, but also declares buffers.
+        let mut input_sizes: Vec<NonZero<u32>> = Vec::new();
         input_sizes.push(NonZero::new(max_layer_size as u32).unwrap());
         input_sizes.push(NonZero::new(max_weight_size as u32).unwrap());
         input_sizes.push(NonZero::new(buffer_data_buffer_size as u32).unwrap());
+        input_sizes.push(NonZero::new((self.layers.iter().map(|c| c.size).sum::<usize>()) as u32).unwrap());
 
 
         let mut layer_sizes: Vec<u32> = Vec::new();
@@ -339,8 +363,9 @@ impl Network for ComputeNetwork<'static> {
         self.layers.iter().for_each(|i| layer_sizes.push(i.size as u32));
         // This has to be the sum of the sizes of every layer, including the input, since that one isnt caluclated by the shader.
         // let output_size = NonZero::new(self._layers.iter().map(|i| i.size as u32).sum()).unwrap();
-        let output_size: u32 = &layer_sizes.iter().sum() * 2u32;
+        let output_size: u32 = layer_sizes.iter().sum::<u32>() * 2;
 
+        // Remember that this file is captured at compile-time not runtime!
         let shader_str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders/matrix.wgsl"));        
         let mut compute: Compute<f32> = Compute::new(&state.device, shader_str, input_sizes, output_size.try_into().unwrap());
 
@@ -351,11 +376,18 @@ impl Network for ComputeNetwork<'static> {
         // let cooked_input: Vec<OutputData> = input.chunks(2).map(|c| OutputData{z_value: c.0, layer_output: c.1}).collect();
         let cooked_input: Vec<OutputData> = input.iter().map(|c| OutputData{z_value: -0.0, layer_output: c.clone()}).collect();
         // Write input layer to first row of output buffer
-        // compute.write_buffer(&state.queue, &input, 0, 0);
         compute.write_buffer_raw(&state.queue, &cooked_input, 0, 0);
 
-        for i in 0..self.layers.len() {
+        let flat_biases: Vec<f32> = self.layers.iter().map(|c| c.biases.clone()).flatten().collect();
 
+        // Write biases
+        compute.write_buffer(&state.queue, &flat_biases, 0, 4);
+
+        let WORK_GROUP_SIZE = 64u32;
+
+        println!("layer sizes: {:?}", layer_sizes);
+        for i in 0..self.layers.len() {
+            println!("test: {}", i);
             let flat_weights: Vec<f32> = self.layers[i].weights.clone().into_iter().flatten().collect();
             // Write the new weights matrix
             compute.write_buffer(&state.queue, &bytemuck::cast_slice(flat_weights.as_slice()).to_vec(), 0, 2);
@@ -365,22 +397,21 @@ impl Network for ComputeNetwork<'static> {
             // Write to BufferData to buffer_data_buffer
             compute.write_buffer_bytes(&state.queue, &buffer_data_bytes, 0, 3);
             // Multiply the matrix and put output into output_buffer[i+1];
-            // Then run activation function and replace output[i+1] with result;
-            // TODO ADD ACTIVATION FUNCTION TO SHADER + USE ENUM TO SEND LAYERS' activation functions to gpu
-            compute.calculate(&state.device, &state.queue);
+            compute.calculate(&state.device, &state.queue, (layer_sizes[i+1] as f32 / WORK_GROUP_SIZE as f32).ceil() as u32);
              
             
         }
 
         // FINISH: FIXING TO OUTPUT Z VALUES AND VALUES SEPARATELY | DONE
         // FINISH: ENSURE THAT INPUT IS PUT INTO THE layer_output rather than z_value | DONE     
-        // FINISH: UPDATE LAYER INPUTS AND OUTPUTS 
+        // FINISH: UPDATE LAYER INPUTS AND OUTPUTS | DONE?
         // let mut flat_output: Vec<OutputData> = compute.read_output(&state.queue, &state.device).await
         //     .as_slice().chunks(2)
         //     .map(|c| OutputData{z_value: c[0], layer_output: c[1]})
         //     .collect();
         let mut flat_output: Vec<OutputData> = bytemuck::cast_slice(compute.read_output(&state.queue, &state.device).await.as_slice()).to_vec();
 
+        println!("Flat output: {:?}", flat_output);
         let mut output: Vec<Vec<OutputData>> = Vec::new();
         // let chunk = input.clone();
         let chunk = cooked_input;
@@ -390,8 +421,16 @@ impl Network for ComputeNetwork<'static> {
             let chunk: Vec<OutputData> = bytemuck::cast_slice(flat_output.drain(0..(l_size) as usize).as_slice()).to_vec();
             output.push(chunk);
         }
-        
 
+        let mut prev_layer: Option<&Layer> = None; 
+        for (i, layer) in itertools::enumerate(&mut self.layers) {
+            if i == 0 {layer.input = input.clone();}
+            else {layer.input = prev_layer.unwrap().output.clone();}
+            layer.z_values = output[i].iter().map(|c| c.z_value).collect();
+            layer.output = output[i].iter().map(|c| c.layer_output).collect();
+            prev_layer = Some(layer);
+        }
+        
         // log::info!("Compute: {:?}", test);
         // event_loop.run(move |_event, _control_flow| {}).unwrap();
 

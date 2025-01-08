@@ -13,5 +13,7 @@ ndarray = "0.16.1"
 # FIX: Link is for path native to my (Max's) computer
 # I will push the source code for my package when needed.
 rust_webgpu = { path = "/home/cwd/Desktop/projects/rust/rust-webgpu" }
-tokio = {version = "1.41.1", features = ["macros", "rt-multi-thread"]}
+tokio = {version = "1.41.1", features = ["time","macros", "rt-multi-thread"]}
 rand = "0.8"
+renderdoc = "0.12.1"
+libloading = "0.8.6"

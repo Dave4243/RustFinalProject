@@ -1,3 +1,7 @@
-- Ensure that `ComputeNetwork::calculate` updates layer inputs, outputs, and z_values
+- Ensure that `ComputeNetwork::calculate` updates layer inputs, outputs, and z_values | DONE
 - Add biasies to compute network
+    - Upload biasies to gpa | done?
+    - Upload bias offsets to gpu
+    - Abstract buffer initialization from calculate step
 - Perform backprop on gpu
+- TODO ADD ACTIVATION FUNCTION TO SHADER + USE ENUM TO SEND LAYERS' activation functions to gpu | DONE?
