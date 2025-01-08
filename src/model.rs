@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use itertools::{interleave, Itertools};
+use itertools::{interleave, intersperse, Itertools};
 use std::{f32::consts::E, num::NonZero};
 use std::vec::Vec;
 
@@ -76,7 +76,7 @@ impl Layer {
     /// initalizes random weights and biases, 
     /// input size is the size of the previous layer
     /// output size is the size of this layer (how many neurons in the layer)
-    fn new(input_size: usize, output_size: usize, activation: ActivationFunction) -> Self {
+    fn new_random(input_size: usize, output_size: usize, activation: ActivationFunction) -> Self {
         let mut rng = rand::thread_rng();
         
         // Randomly initialize weights and biases
@@ -84,10 +84,11 @@ impl Layer {
             .map(|_| (0..input_size).map(|_| rng.gen_range(-0.5..0.5)).collect())
             .collect();
 
-        let biases: Vec<f64> = (0..output_size).map(|_| rng.gen_range(-0.5..0.5)).collect();
+        let biases: Vec<f32> = (0..output_size).map(|_| rng.gen_range(-0.5..0.5)).collect();
 
         Self {
-            size : input_size,
+            // size : input_size,
+            size : output_size,
             weights,
             biases,
             input : vec![],
@@ -97,9 +98,10 @@ impl Layer {
         }
     }
 
-    pub fn calculate(self: &Self, prev_layer_out: Vec<f64>) -> Vec<f64> {
+    pub fn calculate(self: &mut Self, prev_layer_out: &Vec<f32>) -> Vec<f32> {
         assert!(self.weights.len() == self.size, "Number of rows (length of columns) in weight, {}, does not match output layer size, {}!", self.weights.len(), self.size);
-        
+        self.input = prev_layer_out.clone();
+
         // Input vector is column major.
         let mut result: Vec<f32> = vec![0.0; self.size]; 
 
@@ -122,9 +124,9 @@ impl Layer {
         match self.activation_function {
             ActivationFunction::Softmax => {
                 // Find the maximum value for numerical stability
-                let max = result.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                let exps: Vec<f64> = result.iter().map(|&x| (x - max).exp()).collect();
-                let sum: f64 = exps.iter().sum();
+                let max = result.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let exps: Vec<f32> = result.iter().map(|&x| (x - max).exp()).collect();
+                let sum: f32 = exps.iter().sum();
                 result = exps.iter().map(|&x| x / sum).collect();
             },
             _ => result.iter_mut().for_each(|x| *x = self.activation_function.calculate(*x)),
@@ -133,7 +135,46 @@ impl Layer {
         self.output = result.clone();
         return result;
     }
+    
+    fn backpropagate(&mut self, output_gradient: Vec<f32>, learning_rate: f32) -> Vec<f32> {
+        let dLdz : Vec<f32>;
+        match self.activation_function {
+            ActivationFunction::Relu => {
+                dLdz = output_gradient.iter()
+                .zip(self.z_values.iter())
+                .map(|(&og, &iv)| if iv > 0.0 { og } else { 0.0 })
+                .collect();
+            },
+            ActivationFunction::Softmax => dLdz = output_gradient,
+            _ => return Vec::new(),
+        }
+
+        // update weights
+        // dL/dW = dL/dz * dz/dW = dL/dz * input
+        for i in 0..self.weights.len() {
+            for j in 0..self.weights[i].len() {
+                let dLdW = dLdz[i] * self.input[j];
+                self.weights[i][j] -= learning_rate * dLdW;
+            }
+        }
+
+        // update biases, dL/db = dL/dz * dz/dB = dL/dz * 1 = dL/dz
+        for i in 0..self.biases.len() {
+            self.biases[i] -= learning_rate * dLdz[i];
+        }
+
+        // computes gradient with respect to input (output of prev layer)
+        let mut dLdx = vec![0.0; self.input.len()];
+        for j in 0..self.input.len() {
+            for i in 0..self.weights.len() {
+                dLdx[j] += dLdz[i] * self.weights[i][j];
+            }
+        }
+        // pass this gradient back
+        return dLdx;
+    }
 }
+
 
 
 // enum NetworkDim {
@@ -145,11 +186,13 @@ impl Layer {
 
 
 // #[derive(Clone)]
+// Add reference for buffers?
 pub struct ComputeNetwork<'a> {
     layers: Vec<Layer>,
-    learning_rate : f32;
+    learning_rate : f32,
     // Optional since lazy initialized
     gpu_state: Option<State<'a>>,
+    // Contains buffers
     compute: Option<Compute<f32>>,
     input : Vec<f32>,
     output: Vec<f32>,
@@ -163,7 +206,8 @@ struct BufferData {
     curr_layer_index: u32,
     // Contains size of every layer, including input layer at index 0
     // This means it is not one to one with the networks layers vector!
-    output_layer_sizes_and_activations: Vec<u32>
+    // output_layer_sizes_and_activations: Vec<u32>
+    layer_datas: Vec<u32>
 }
 impl BufferData {
     pub fn new_from_layer(input_layer: &Vec<f32>, layers: &Vec<Layer>, index: u32) -> Self {
@@ -172,21 +216,40 @@ impl BufferData {
         let mut layer_sizes: Vec<u32> = Vec::new();
         layer_sizes.push(input_layer.len() as u32);
         layers.iter().for_each(|i| layer_sizes.push(i.size as u32));
-        
+
+        println!("layer sizes?: {:?}", layer_sizes);
+
         let mut layer_activations: Vec<u32> = Vec::new();
         layer_activations.push(input_layer.len() as u32);
-        layers.iter().for_each(|i| layer_sizes.push(i.activation_function as u32));
+        layers.iter().for_each(|i| layer_activations.push(i.activation_function as u32));
+
+        println!("layer activations?: {:?}", layer_activations);
+       
+        let mut sum = 0;
+        let mut layer_offsets: Vec<u32> = Vec::with_capacity(layer_sizes.len());
+        for size in &layer_sizes {
+            println!("size?: {}", size);
+            layer_offsets.push(sum);
+            sum += size;
+        }
+        println!("layer offsets?: {:?}", layer_offsets);
 
         return BufferData{
             weights_dims,
             curr_layer_index: index,
-            output_layer_sizes_and_activations: layer_sizes
-                .into_iter()
-                .interleave(layer_activations.into_iter())
-                .collect::<Vec<_>>()
+            layer_datas: 
+                itertools::izip!(layer_sizes, layer_activations, layer_offsets).flat_map(|(a, b, c)| [a, b, c]).collect()
+                // layer_sizes
+                // .into_iter()
+                // .interleave(layer_activations.into_iter())
+                // .chunks(2)
+                // .into_iter()()
+                // .interleave(layer_offsets.into_iter())
+                // // .flatten()
+                // .collect::<Vec<_>>()
         };
     }
-
+// itertools::izip!()
     pub fn to_bytes(self:&Self) -> Vec<u8> {
         let buffer_data_values = [
             self.weights_dims[0],
@@ -194,31 +257,62 @@ impl BufferData {
             self.curr_layer_index,
         ];
         let buffer_data_bytes: &[u8] = bytemuck::cast_slice(&buffer_data_values);
-        let output_layer_sizes_and_activations_bytes: &[u8] = bytemuck::cast_slice(&self.output_layer_sizes_and_activations);
+        let output_layer_sizes_and_activations_bytes: &[u8] = bytemuck::cast_slice(&self.layer_datas);
         let combined_buffer_data_bytes: Vec<u8> = buffer_data_bytes.iter().chain(output_layer_sizes_and_activations_bytes.iter()).copied().collect();
         
         return combined_buffer_data_bytes;
     }
 }
 
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct OutputData {
+    z_value: f32,
+    layer_output: f32
+}
+
 impl Network for ComputeNetwork<'static> {
 
     fn get_layers(self: &Self) -> &Vec<Layer> {
-        return &self._layers;
+        return &self.layers;
     }
     fn get_layers_mut(self: &mut Self) -> &mut Vec<Layer> {
-        return &mut self._layers;
+        return &mut self.layers;
     }
 
-    fn new() -> Self { 
-        Self{
-            _layers : vec![],
-            // State and compute are lazy initialized, they cannot be sized until _layers is complete at caluclation time
-            state: None,
+    fn new_default() -> Self { 
+        let mut network = Self {
+            layers : vec![],
+            learning_rate : 0.1,
+            input : vec![],
+            output : vec![],
+            // State and compute are lazy initialized, they cannot be sized until layers is complete at caluclation time
+            gpu_state: None,
+            compute: None, 
+        };  
+
+        // single layer neural network
+        let first_layer = Layer::new_random
+        (784, 400, ActivationFunction::Relu);
+        let output_layer = Layer::new_random
+        (400, 10, ActivationFunction::Softmax);
+        network.layers.push(first_layer);
+        network.layers.push(output_layer);
+        return network;
+    }
+
+    fn new(learning_rate: f32) -> Self {
+        Self {
+            layers : vec![],
+            learning_rate,
+            input : vec![],
+            output : vec![],
+            // State and compute are lazy initialized, they cannot be sized until layers is complete at caluclation time
+            gpu_state: None,
             compute: None, 
         }
     }
-
 
     /// Steps:
     /// 1. find size of largest layer, in order to size output buffer and prev_layer buffer
@@ -228,44 +322,50 @@ impl Network for ComputeNetwork<'static> {
     /// 3. Move input layer into output buffer
     /// 4. Move weights matrix into input_buffer
     /// 5. Calculate (matrix multiply input and output, put results into)
-    /// 
-    async fn calculate(self: &mut Self, input: Vec<f32>) -> Vec<Vec<f32>>{
+    /// CHANGES:
+    /// 1. Required to update layer input and output properties individually (does not call layer.calculate!)
+    /// 2. Must return only needed outputs, not full output of all layers 
+    async fn calculate(self: &mut Self, input: &Vec<f32>) -> Vec<f32>{
         start_logger();
     
         // let event_loop = EventLoop::new().unwrap();
 
+        // Creates GPU pipeline
         #[allow(unused_mut)]
-        if self.state.is_none() {
-            self.state = Some(State::new_no_graphics().await);
+        if self.gpu_state.is_none() {
+            self.gpu_state = Some(State::new_no_graphics().await);
         }
-        let state: &State = self.state.as_ref().unwrap();
+        let state: &State = self.gpu_state.as_ref().unwrap();
 
         let mut max_layer_size = input.len();
-        for layer in self._layers.iter() {
+        for layer in self.layers.iter() {
             if layer.size > max_layer_size {max_layer_size = layer.size;}
         }
 
         let mut max_weight_size = 0;
-        for layer in self._layers.iter() {
+        for layer in self.layers.iter() {
             let weight_size = layer.weights.iter().flatten().count();
             if weight_size > max_weight_size {max_weight_size = weight_size;}
         }
 
-        let buffer_data_buffer_size = size_of::<BufferData>();
+        let buffer_data_buffer_size = std::mem::size_of::<BufferData>();
 
-        let mut input_sizes: Vec<NonZero<u32>> = Vec::new(); //Vec::from_iter((0..2).map(|_| NonZero::new(16).unwrap()));      
+        // Sets buffer sizes, but also declares buffers.
+        let mut input_sizes: Vec<NonZero<u32>> = Vec::new();
         input_sizes.push(NonZero::new(max_layer_size as u32).unwrap());
         input_sizes.push(NonZero::new(max_weight_size as u32).unwrap());
         input_sizes.push(NonZero::new(buffer_data_buffer_size as u32).unwrap());
+        input_sizes.push(NonZero::new((self.layers.iter().map(|c| c.size).sum::<usize>()) as u32).unwrap());
 
 
         let mut layer_sizes: Vec<u32> = Vec::new();
         layer_sizes.push(input.len() as u32);
-        self._layers.iter().for_each(|i| layer_sizes.push(i.size as u32));
+        self.layers.iter().for_each(|i| layer_sizes.push(i.size as u32));
         // This has to be the sum of the sizes of every layer, including the input, since that one isnt caluclated by the shader.
         // let output_size = NonZero::new(self._layers.iter().map(|i| i.size as u32).sum()).unwrap();
-        let output_size: u32 = layer_sizes.iter().sum();
+        let output_size: u32 = layer_sizes.iter().sum::<u32>() * 2;
 
+        // Remember that this file is captured at compile-time not runtime!
         let shader_str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders/matrix.wgsl"));        
         let mut compute: Compute<f32> = Compute::new(&state.device, shader_str, input_sizes, output_size.try_into().unwrap());
 
@@ -273,47 +373,82 @@ impl Network for ComputeNetwork<'static> {
         // let buffer_data = BufferData::new_from_layer(&input, &self._layers, 1);
         // let buffer_data_bytes: Vec<u8> =  buffer_data.to_bytes();
 
+        // let cooked_input: Vec<OutputData> = input.chunks(2).map(|c| OutputData{z_value: c.0, layer_output: c.1}).collect();
+        let cooked_input: Vec<OutputData> = input.iter().map(|c| OutputData{z_value: -0.0, layer_output: c.clone()}).collect();
         // Write input layer to first row of output buffer
-        compute.write_buffer(&state.queue, &input, 0, 0);
+        compute.write_buffer_raw(&state.queue, &cooked_input, 0, 0);
 
-        for i in 0..self._layers.len() {
+        let flat_biases: Vec<f32> = self.layers.iter().map(|c| c.biases.clone()).flatten().collect();
 
-            let flat_weights: Vec<f32> = self._layers[i].weights.clone().into_iter().flatten().collect();
+        // Write biases
+        compute.write_buffer(&state.queue, &flat_biases, 0, 4);
+
+        let WORK_GROUP_SIZE = 64u32;
+
+        println!("layer sizes: {:?}", layer_sizes);
+        for i in 0..self.layers.len() {
+            println!("test: {}", i);
+            let flat_weights: Vec<f32> = self.layers[i].weights.clone().into_iter().flatten().collect();
             // Write the new weights matrix
             compute.write_buffer(&state.queue, &bytemuck::cast_slice(flat_weights.as_slice()).to_vec(), 0, 2);
             // Write BufferData
-            let buffer_data = BufferData::new_from_layer(&input, &self._layers, (i+1).try_into().unwrap());
+            let buffer_data = BufferData::new_from_layer(&input, &self.layers, (i+1).try_into().unwrap());
             let buffer_data_bytes: Vec<u8> =  buffer_data.to_bytes();
             // Write to BufferData to buffer_data_buffer
             compute.write_buffer_bytes(&state.queue, &buffer_data_bytes, 0, 3);
             // Multiply the matrix and put output into output_buffer[i+1];
-            // Then run activation function and replace output[i+1] with result;
-            // TODO ADD ACTIVATION FUNCTION TO SHADER + USE ENUM TO SEND LAYERS' activation functions to gpu
-            compute.calculate(&state.device, &state.queue);
+            compute.calculate(&state.device, &state.queue, (layer_sizes[i+1] as f32 / WORK_GROUP_SIZE as f32).ceil() as u32);
              
             
         }
 
-        
-        let mut flat_output = compute.read_output(&state.queue, &state.device).await;
+        // FINISH: FIXING TO OUTPUT Z VALUES AND VALUES SEPARATELY | DONE
+        // FINISH: ENSURE THAT INPUT IS PUT INTO THE layer_output rather than z_value | DONE     
+        // FINISH: UPDATE LAYER INPUTS AND OUTPUTS | DONE?
+        // let mut flat_output: Vec<OutputData> = compute.read_output(&state.queue, &state.device).await
+        //     .as_slice().chunks(2)
+        //     .map(|c| OutputData{z_value: c[0], layer_output: c[1]})
+        //     .collect();
+        let mut flat_output: Vec<OutputData> = bytemuck::cast_slice(compute.read_output(&state.queue, &state.device).await.as_slice()).to_vec();
 
-        let mut output: Vec<Vec<f32>> = Vec::new();
-        let chunk = input.clone();
+        println!("Flat output: {:?}", flat_output);
+        let mut output: Vec<Vec<OutputData>> = Vec::new();
+        // let chunk = input.clone();
+        let chunk = cooked_input;
         output.push(chunk);
         // for l_size in [input.iter(), self._layers.iter().map(|i| i.size)].iter().flatten() {
         for l_size in layer_sizes.into_iter() {
-            let chunk: Vec<f32> = bytemuck::cast_slice(flat_output.drain(0..l_size as usize).as_slice()).to_vec();
+            let chunk: Vec<OutputData> = bytemuck::cast_slice(flat_output.drain(0..(l_size) as usize).as_slice()).to_vec();
             output.push(chunk);
         }
-        
 
+        let mut prev_layer: Option<&Layer> = None; 
+        for (i, layer) in itertools::enumerate(&mut self.layers) {
+            if i == 0 {layer.input = input.clone();}
+            else {layer.input = prev_layer.unwrap().output.clone();}
+            layer.z_values = output[i].iter().map(|c| c.z_value).collect();
+            layer.output = output[i].iter().map(|c| c.layer_output).collect();
+            prev_layer = Some(layer);
+        }
+        
         // log::info!("Compute: {:?}", test);
         // event_loop.run(move |_event, _control_flow| {}).unwrap();
 
         // let result: Vec<Vec<f32>> = Vec::new();
 
         // return result;
-        return output;
+        return output.last().unwrap().into_iter().map(|c| c.layer_output).collect();
+    }
+
+    async fn backpropagate(&mut self, actual_classification: &Vec<f32>) -> f32 {
+        todo!();
+    }
+    // async fn backpropagate(&mut self, actual_classification: &Vec<f32>) -> impl Future<Output = f32> {
+        
+    // }
+
+    async fn train(epochs : usize) {
+        
     }
 }
 
@@ -338,37 +473,24 @@ where Self: Sized {
         todo!();
     }
 
-    pub fn write_to_file(file_name: &str) -> std::io::Result<()> {
+    fn write_to_file(file_name: &str) -> std::io::Result<()> {
         todo!()
     }
 
-    pub fn new() -> Self {
-        let mut network = Network {
-            layers : vec![],
-            learning_rate : 0.1,
-            input : vec![],
-            output : vec![],
-        };
-        // single layer neural network
-        let first_layer = Layer::new
-        (784, 400, ActivationFunction::Relu);
-        let output_layer = Layer::new
-        (400, 10, ActivationFunction::Softmax);
-        network.layers.push(first_layer);
-        network.layers.push(output_layer);
-        return network;
-    }
+    fn new_default() -> Self;
 
+    fn new(learning_rate: f32) -> Self;
+    
     // pub fn first_layer(self: &Self) -> Option<&Layer> {
     //     self.layers.first()
     // }
     
-    pub fn output_layer(self: &Self) -> Option<&Layer> {
+    fn output_layer(self: &Self) -> Option<&Layer> {
         self.get_layers().last()
     }
 
     fn add_layer(self: &mut Self, layer: Layer) -> Result<(), String> {
-        match self.getlayers().last() {
+        match self.get_layers().last() {
             // This code might be wrong lol
             Some(prev_layer) if prev_layer.size != layer.weights[0].len() => {
                 return Err(std::format!(
@@ -399,6 +521,12 @@ where Self: Sized {
     /// Must return just the output layer's output
     /// Must also ensure that layer inputs, z-values, and outputs are correctly updated, though isn't nesisarrily required to run layer.calculate()
     async fn calculate(self: &mut Self, input: &Vec<f32>) -> Vec<f32>;
+
+
+    async fn backpropagate(&mut self, actual_classification: &Vec<f32>) -> f32;
+    async fn train(epochs : usize) {
+        todo!();
+    }
 }
 
 #[derive(Clone)]
@@ -408,7 +536,10 @@ pub struct ClassicNetwork/*<const dim: NetworkDim = NetworkDim::Invalid>*/ /*<I:
     // _output: [[f64;28];28],
 
     // _input_layer: Option<&'a Layer>,
-    _layers: Vec<Layer>,
+    input: Vec<f32>,
+    output: Vec<f32>,
+    layers: Vec<Layer>,
+    learning_rate: f32,
     // _output_layer: Option<&'a Layer>,
 
 
@@ -417,29 +548,58 @@ pub struct ClassicNetwork/*<const dim: NetworkDim = NetworkDim::Invalid>*/ /*<I:
 
 impl Network for ClassicNetwork {
 
-    fn get_layers(self: &Self) -> &Vec<Layer> {
-        return &self._layers;
-    }
-    fn get_layers_mut(self: &mut Self) -> &mut Vec<Layer> {
-        return &mut self._layers;
-    }
-     
-    fn new() -> Self {
-        Self{
-            _layers : vec![],
-        }
+    fn new(learning_rate: f32) -> Self {
+        let network = Self {
+            layers : vec![],
+            learning_rate,
+            input : vec![],
+            output : vec![],
+        };
+        return network;
     }
 
-    async fn calculate(self: &mut Self, input: Vec<f32>) -> Vec<Vec<f32>> {
+    fn new_default() -> Self {
+        let mut network = ClassicNetwork {
+            layers : vec![],
+            learning_rate : 0.1,
+            input : vec![],
+            output : vec![],
+        };
+        // single layer neural network
+        let first_layer = Layer::new_random
+        (784, 400, ActivationFunction::Relu);
+        let output_layer = Layer::new_random
+        (400, 10, ActivationFunction::Softmax);
+        network.layers.push(first_layer);
+        network.layers.push(output_layer);
+        return network;
+    }
+
+    fn get_layers(self: &Self) -> &Vec<Layer> {
+        return &self.layers;
+    }
+    fn get_layers_mut(self: &mut Self) -> &mut Vec<Layer> {
+        return &mut self.layers;
+    }
+     
+    // fn new() -> Self {
+    //     todo!();
+    //     // Self{
+    //     //     layers : vec![],
+    //     // }
+    // }
+
+    async fn calculate(self: &mut Self, input: &Vec<f32>) -> Vec<f32> {
         self.input = input.clone();
+        let mut curr_input: Vec<f32> = input.clone();
+
         assert!(self.output_layer().expect("No layers!").size == 10, "output layer has incorrect size! Expected {}, found {}", 10, self.output_layer().expect("No layers!").size);
         
         // let curr_input_matrix:Array2<f64> = Array2::from_shape_vec((1,input.len()), input).expect("Input array bad!");
-        let mut curr_input_matrix: Vec<f32> = input.clone();
         
-        let mut result: Vec<Vec<f32>> = Vec::with_capacity(self._layers.len()+1);
+        let mut result: Vec<Vec<f32>> = Vec::with_capacity(self.layers.len()+1);
 
-        result.push(curr_input_matrix.clone());
+        result.push(curr_input.clone());
 
         for curr_layer in self.layers.iter_mut() {
             curr_input = curr_layer.calculate(&curr_input);
@@ -448,20 +608,21 @@ impl Network for ClassicNetwork {
         return curr_input;
     } 
     
-    // actual_classification is the vector of 10 values containing 0s 
-    // and 1 for the actual number the model was supposed to predict
-    pub fn backpropagate(&mut self, actual_classification: &Vec<f64>) -> f64 {
+    /// actual_classification is the vector of 10 values containing 0s 
+    /// and 1 for the actual number the model was supposed to predict
+    /// CLARIFY: What is the meaning of the output here?
+    async fn backpropagate(&mut self, actual_classification: &Vec<f32>) -> f32 {
         let fake_zero = 1e-10;
-        let loss: f64 = self
+        let loss: f32 = self
             .output
             .iter()
             .zip(actual_classification)
             .map(|(&output, &target)| -(target * (output.max(fake_zero).ln())))
-            .sum::<f64>();        
+            .sum::<f32>();        
         // Compute the gradient of the loss (cross-entrophy) bc we are using softmax
         // gradient is with respect to pre-softmax values
         // literally just sum of actual - predicted
-        let output_gradient: Vec<f64> = self
+        let output_gradient: Vec<f32> = self
             .output
             .iter()
             .zip(actual_classification)
@@ -476,7 +637,7 @@ impl Network for ClassicNetwork {
         return loss;
     }
 
-    pub fn train(epochs : usize) {
+    async fn train(epochs : usize) {
         todo!();
     }
 }
