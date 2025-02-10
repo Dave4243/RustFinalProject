@@ -168,7 +168,11 @@ impl Network{
             // let layer_size = lines.next().unwrap()?;
             // let size: usize = layer_size.split_whitespace().last().unwrap().parse::<usize>().unwrap();
 
-            let activation_function = match lines.next().unwrap()?.as_str() {
+            let mut activation = lines.next().unwrap()?;
+            while activation.as_str().is_empty() {
+                activation = lines.next().unwrap()?;
+            }
+            let activation_function = match activation.as_str().trim() {
                 // "Activation function: Sigmoid" => ActivationFunction::Sigmoid,
                 // "Activation function: Tanh" => ActivationFunction::Tanh,
                 "Activation function: Relu" => ActivationFunction::Relu,
@@ -181,15 +185,29 @@ impl Network{
             while let Some(weight_line) = lines.next() {
                 let weights_label = weight_line?;
                 if weights_label.trim().is_empty() {
+                    panic!("Network file is not formatted properly");
+                }
+                else if weights_label.trim() != "Weights" {
                     break;
                 }
                 let weights_str = lines.next().unwrap()?;
-                let weights_vec: Vec<f64> = weights_str.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+                //println!("{}", weights_str);
+                let weights_vec: Vec<f64> = weights_str.split(',').map(|x| x.trim().replace(&['[', ']'], "").parse::<f64>().unwrap()).collect();
                 weights.push(weights_vec);
             }
 
             let mut biases: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+            
+            let input_label = lines.next().unwrap()?;
+            if input_label.trim().is_empty() || input_label.trim() != "Input layer" {
+                panic!("Network file is not formatted properly");
+            }
             let mut input: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
+
+            let z_val_label = lines.next().unwrap()?;
+            if z_val_label.trim().is_empty() || z_val_label.trim() != "Z-values" {
+                panic!("Network file is not formatted properly");
+            }
             let mut z_values: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
             // let mut output: Vec<f64> = lines.next().unwrap()?.split(',').map(|x| x.trim().parse::<f64>().unwrap()).collect();
             layers.push(Layer { 
@@ -230,20 +248,20 @@ impl Network{
             for weight in &layer.weights {
                 writeln!(file, "Weights")?;
                 let weight_str = weight.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(", ");
-                writeln!(file, "[{}]", weight_str)?;
+                writeln!(file, "{}", weight_str)?;
             }
 
             writeln!(file, "Bias")?;
             let bias_str = layer.biases.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
-            writeln!(file, "[{}]", bias_str)?;
+            writeln!(file, "{}", bias_str)?;
 
             writeln!(file, "Input layer")?;
             let input_str = layer.input.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
-            writeln!(file, "[{}]", input_str)?;
+            writeln!(file, "{}", input_str)?;
 
             writeln!(file, "Z-values")?;
             let z_str = layer.z_values.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
-            writeln!(file, "[{}]", z_str)?;
+            writeln!(file, "{}", z_str)?;
 
             // writeln!(file, "Output");
             // let output_str = layer.output.iter().map(|x| format!("{:.9}", x)).collect::<Vec<String>>().join(",");
